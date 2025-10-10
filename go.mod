@@ -12,7 +12,7 @@ require (
 	github.com/libp2p/go-libp2p-kad-dht v0.34.0
 	github.com/multiformats/go-multiaddr v0.16.1
 	github.com/multiformats/go-multihash v0.2.3
-	github.com/quic-go/quic-go v0.54.0
+	github.com/quic-go/quic-go v0.54.1
 	golang.org/x/crypto v0.41.0
 	google.golang.org/grpc v1.74.2
 	google.golang.org/protobuf v1.36.8
