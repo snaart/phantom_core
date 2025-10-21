@@ -133,33 +133,6 @@ func (c *logicClient) GetContactHashes() []string {
 func (c *logicClient) HandleP2PMessage(packet *proto2.Packet) error {
 	c.handler.OnLog(LogLevelInfo, fmt.Sprintf("📨 Получен P2P пакет от %s...", truncateHash(packet.SourceClientIdHash)))
 
-	// Шаг 1: Загрузить контакт, чтобы получить его публичный ключ для верификации.
-	contact, err := c.ks.LoadContact(packet.SourceClientIdHash)
-	if err != nil || contact.IdentityPublicDili == nil {
-		// Если мы не знаем этот контакт или у нас нет его ключа, мы не можем проверить подпись.
-		// Исключение: можно разрешать KeyRequest от неизвестных контактов, но это требует доработки логики.
-		// В текущей модели безопасности, для предотвращения спама, мы отбрасываем пакет.
-		c.handler.OnLog(LogLevelError, fmt.Sprintf("❌ P2P: Подпись не может быть проверена. Контакт %s или его ключ не найдены. Пакет отброшен.", truncateHash(packet.SourceClientIdHash)))
-		return fmt.Errorf("не удалось проверить подпись: контакт %s не найден", truncateHash(packet.SourceClientIdHash))
-	}
-
-	// Шаг 2: Подготовить данные для верификации (копия пакета без подписи).
-	packetToVerify := proto.Clone(packet).(*proto2.Packet)
-	packetToVerify.Signature = nil
-	dataToVerify, err := proto.Marshal(packetToVerify)
-	if err != nil {
-		c.handler.OnLog(LogLevelError, "❌ P2P: Не удалось сериализовать пакет для проверки подписи.")
-		return err
-	}
-
-	// Шаг 3: Проверить подпись.
-	if !mode5.Verify(contact.IdentityPublicDili.(*mode5.PublicKey), dataToVerify, packet.Signature) {
-		c.handler.OnLog(LogLevelCritical, fmt.Sprintf("🔥🔥🔥 КРИТИЧЕСКАЯ ОШИБКА БЕЗОПАСНОСТИ: ПОДДЕЛЬНАЯ ПОДПИСЬ в P2P пакете от %s! Пакет отброшен.", truncateHash(packet.SourceClientIdHash)))
-		return errors.New("неверная подпись P2P пакета")
-	}
-	c.handler.OnLog(LogLevelInfo, "✅ P2P: Подпись пакета успешно проверена.")
-
-	// Исходная логика обработки пакета (теперь выполняется только для проверенных пакетов)
 	switch pld := packet.Payload.(type) {
 	case *proto2.Packet_EncryptedMessage:
 		c.handleEncryptedMessage(packet)
@@ -336,12 +309,8 @@ func (c *logicClient) sendMessageViaP2P(peerHash, text string, p2pTransport *P2P
 		}},
 	}
 
-	err = c.ks.WithUserAccount(c.username, func(ua *UserAccount) error {
-		return c.signPacket(packet, ua.IdentityPrivateDili)
-	})
-	if err != nil {
-		return err
-	}
+	// Асимметричная подпись удалена для обеспечения отказуемости (Deniability).
+	// Аутентификация сообщения обеспечивается симметричным тегом AES-GCM.
 
 	if err := p2pTransport.SendPacket(peerHash, packet); err != nil {
 		return fmt.Errorf("не удалось отправить сообщение через P2P: %w", err)
@@ -561,11 +530,15 @@ func (c *logicClient) sendEncryptedPacket(peerHash, text string, ratchet *Double
 		}},
 	}
 
-	err = c.ks.WithUserAccount(c.username, func(ua *UserAccount) error {
-		return c.signPacket(packet, ua.IdentityPrivateDili)
-	})
-	if err != nil {
-		return err
+	// Подписываем только пакет инициации сессии для подтверждения авторства ключей.
+	// Обычные сообщения не подписываются для обеспечения отказуемости (deniability).
+	if initialCts != nil {
+		err = c.ks.WithUserAccount(c.username, func(ua *UserAccount) error {
+			return c.signPacket(packet, ua.IdentityPrivateDili)
+		})
+		if err != nil {
+			return err
+		}
 	}
 
 	// Пытаемся отправить через P2P если доступно

@@ -422,7 +422,7 @@ func (dr *DoubleRatchet) RatchetEncrypt(plaintext []byte, firstMessageCts *Initi
 		header.KyberPublicKey, header.ECPublicKey = pubKeyKyberBytes, dr.ECSPub[:]
 	}
 
-	cks, mk := kdfCK(dr.CKs)
+	cks, encryptionKey, _ := kdfCK(dr.CKs)
 	dr.CKs = cks
 	header.PN, header.N = dr.PN, dr.Ns
 
@@ -445,7 +445,7 @@ func (dr *DoubleRatchet) RatchetEncrypt(plaintext []byte, firstMessageCts *Initi
 	if err != nil {
 		return nil, nil, err
 	}
-	ciphertext, err = encryptAEAD(mk, plaintext, serializedHeader, dr.Ns)
+	ciphertext, err = encryptAEAD(encryptionKey, plaintext, serializedHeader, dr.Ns)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -532,10 +532,10 @@ func (dr *DoubleRatchet) RatchetDecrypt(headerData []byte, ciphertext []byte) ([
 	if dr.CKr == nil {
 		return nil, errors.New("цепочка получения не инициализирована")
 	}
-	ckr, mk := kdfCK(dr.CKr)
+	ckr, encryptionKey, _ := kdfCK(dr.CKr)
 	dr.CKr = ckr
 
-	plaintext, err = decryptAEAD(mk, ciphertext, headerData, header.N)
+	plaintext, err = decryptAEAD(encryptionKey, ciphertext, headerData, header.N)
 	if err != nil {
 		return nil, err
 	}
@@ -610,10 +610,10 @@ func (dr *DoubleRatchet) skipMessageKeys(until uint64) error {
 	}
 	pubKeyECBytes := dr.ECR[:]
 	for dr.Nr < until {
-		ckr, mk := kdfCK(dr.CKr)
+		ckr, encryptionKey, _ := kdfCK(dr.CKr)
 		dr.CKr = ckr
 		keyID := messageKeyID(pubKeyKyberBytes, pubKeyECBytes, dr.Nr)
-		dr.MKSKIPPED[keyID] = mk
+		dr.MKSKIPPED[keyID] = encryptionKey
 		dr.Nr++
 	}
 	return nil
@@ -644,14 +644,19 @@ func kdfRK(rk, dhOut []byte) (newRK, chainKey []byte) {
 	return derivedKeyMaterial[:32], derivedKeyMaterial[32:]
 }
 
-func kdfCK(ck []byte) (newCK, msgKey []byte) {
-	mac1 := hmac.New(sha256.New, ck)
-	mac1.Write([]byte{0x01})
-	msgKey = mac1.Sum(nil)
-	mac2 := hmac.New(sha256.New, ck)
-	mac2.Write([]byte{0x02})
-	newCK = mac2.Sum(nil)
-	return newCK, msgKey
+func kdfCK(ck []byte) (newCK, encryptionKey, authenticationKey []byte) {
+	macEnc := hmac.New(sha256.New, ck)
+	macEnc.Write([]byte{0x01}) // Константа для ключа шифрования
+	encryptionKey = macEnc.Sum(nil)
+
+	macAuth := hmac.New(sha256.New, ck)
+	macAuth.Write([]byte{0x02}) // Константа для ключа аутентификации
+	authenticationKey = macAuth.Sum(nil)
+
+	macNext := hmac.New(sha256.New, ck)
+	macNext.Write([]byte{0x03}) // Константа для следующего цепочечного ключа
+	newCK = macNext.Sum(nil)
+	return
 }
 
 func messageKeyID(kyberPublicKey, ecPublicKey []byte, n uint64) string {
