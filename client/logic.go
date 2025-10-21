@@ -133,6 +133,33 @@ func (c *logicClient) GetContactHashes() []string {
 func (c *logicClient) HandleP2PMessage(packet *proto2.Packet) error {
 	c.handler.OnLog(LogLevelInfo, fmt.Sprintf("📨 Получен P2P пакет от %s...", truncateHash(packet.SourceClientIdHash)))
 
+	// Шаг 1: Загрузить контакт, чтобы получить его публичный ключ для верификации.
+	contact, err := c.ks.LoadContact(packet.SourceClientIdHash)
+	if err != nil || contact.IdentityPublicDili == nil {
+		// Если мы не знаем этот контакт или у нас нет его ключа, мы не можем проверить подпись.
+		// Исключение: можно разрешать KeyRequest от неизвестных контактов, но это требует доработки логики.
+		// В текущей модели безопасности, для предотвращения спама, мы отбрасываем пакет.
+		c.handler.OnLog(LogLevelError, fmt.Sprintf("❌ P2P: Подпись не может быть проверена. Контакт %s или его ключ не найдены. Пакет отброшен.", truncateHash(packet.SourceClientIdHash)))
+		return fmt.Errorf("не удалось проверить подпись: контакт %s не найден", truncateHash(packet.SourceClientIdHash))
+	}
+
+	// Шаг 2: Подготовить данные для верификации (копия пакета без подписи).
+	packetToVerify := proto.Clone(packet).(*proto2.Packet)
+	packetToVerify.Signature = nil
+	dataToVerify, err := proto.Marshal(packetToVerify)
+	if err != nil {
+		c.handler.OnLog(LogLevelError, "❌ P2P: Не удалось сериализовать пакет для проверки подписи.")
+		return err
+	}
+
+	// Шаг 3: Проверить подпись.
+	if !mode5.Verify(contact.IdentityPublicDili.(*mode5.PublicKey), dataToVerify, packet.Signature) {
+		c.handler.OnLog(LogLevelCritical, fmt.Sprintf("🔥🔥🔥 КРИТИЧЕСКАЯ ОШИБКА БЕЗОПАСНОСТИ: ПОДДЕЛЬНАЯ ПОДПИСЬ в P2P пакете от %s! Пакет отброшен.", truncateHash(packet.SourceClientIdHash)))
+		return errors.New("неверная подпись P2P пакета")
+	}
+	c.handler.OnLog(LogLevelInfo, "✅ P2P: Подпись пакета успешно проверена.")
+
+	// Исходная логика обработки пакета (теперь выполняется только для проверенных пакетов)
 	switch pld := packet.Payload.(type) {
 	case *proto2.Packet_EncryptedMessage:
 		c.handleEncryptedMessage(packet)
@@ -150,7 +177,6 @@ func (c *logicClient) HandleP2PMessage(packet *proto2.Packet) error {
 func (c *logicClient) handleP2PKeyRequest(packet *proto2.Packet) {
 	c.handler.OnLog(LogLevelInfo, fmt.Sprintf("🔑 Получен P2P запрос ключей от %s", truncateHash(packet.SourceClientIdHash)))
 
-	// === НАЧАЛО ИСПРАВЛЕНИЯ: Разрешение "гонки" инициализации ===
 	session := c.getOrCreateSession(packet.SourceClientIdHash)
 	session.initMutex.Lock()
 	// Проверяем, не отправили ли мы сами запрос на установку сессии этому пиру.
@@ -252,14 +278,12 @@ func (c *logicClient) sendMessageViaP2P(peerHash, text string, p2pTransport *P2P
 	if len(contact.RatchetState) == 0 {
 		c.handler.OnLog(LogLevelInfo, "✅ [HANDSHAKE] Шаг 1: Сессия не установлена. Отправка запроса ключей (KeyRequest)...")
 
-		// === НАЧАЛО ИСПРАВЛЕНИЯ ===
 		// Устанавливаем флаг, что мы инициируем сессию.
 		// Это поможет разрешить "гонку", если собеседник сделает то же самое.
 		session := c.getOrCreateSession(peerHash)
 		session.initMutex.Lock()
 		session.keyRequestInFlight = true
 		session.initMutex.Unlock()
-		// === КОНЕЦ ИСПРАВЛЕНИЯ ===
 
 		keyReqPacket := &proto2.Packet{
 			SourceClientIdHash:      c.myUsernameHash,
@@ -486,9 +510,6 @@ func (c *logicClient) handleKeyResponse(resp *proto2.KeyResponse) {
 		c.handler.OnLog(LogLevelError, fmt.Sprintf("❌ [HANDSHAKE] Не удалось установить сессию с %s после получения ключей.", truncateHash(peerHash)))
 	}
 }
-
-// Остальные методы остаются без изменений...
-// (Копируем все остальные методы из исходного logic.go)
 
 func (c *logicClient) establishSessionAsAlice(session *peerSession, peerHash string) bool {
 	contact, err := c.ks.LoadContact(peerHash)
@@ -803,7 +824,6 @@ func (c *logicClient) startNewChat(peerUsername string, tlsConfig *tls.Config) e
 }
 
 func (c *logicClient) sendMessage(peerHash, text string) error {
-	// ... (начало функции без изменений)
 	contact, err := c.ks.LoadContact(peerHash)
 	if err != nil {
 		return fmt.Errorf("не могу найти контакт для отправки сообщения: %w", err)
@@ -831,16 +851,10 @@ func (c *logicClient) sendMessage(peerHash, text string) error {
 		return fmt.Errorf("не удалось сохранить сообщение в очередь: %w", err)
 	}
 
-	// === ДОБАВЛЕНО ИСПРАВЛЕНИЕ ===
 	// После сохранения сообщения в очередь, немедленно инициируем хендшейк,
 	// отправляя запрос на ключи через сервер.
 	return c.requestKeys(peerHash)
 }
-
-// Остальные методы из исходного logic.go без изменений...
-// initAlice, initBob, getOrCreateSession, verifyIdentityKeys, register, requestKeys,
-// persistRatchetState, signPacket, handleSystemNotification, replenishOPKsAndReregister,
-// generateSafetyNumber, shutdown, getHashesFromServerSecurely, forceConnection и др.
 
 func (c *logicClient) initAlice(session *peerSession) (*DoubleRatchet, *InitialCiphertexts, error) {
 	resp := session.pendingKeyResp

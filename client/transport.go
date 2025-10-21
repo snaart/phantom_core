@@ -32,7 +32,7 @@ import (
 )
 
 const (
-	serverAddress = "80.74.27.30:50051"
+	serverAddress = "{ip}"
 
 	// Таймауты для подключения
 	connectTimeoutTCP  = 10 * time.Second

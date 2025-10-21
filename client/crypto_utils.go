@@ -28,7 +28,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"time" // Добавлен импорт для работы со временем
+	"time"
 
 	"github.com/cloudflare/circl/kem/kyber/kyber1024"
 	"github.com/cloudflare/circl/sign"
@@ -40,15 +40,18 @@ import (
 const (
 	MaxSkip = 1000
 
-	// ReplayWindowSeconds определяет временное окно (в секундах), в течение которого сообщение считается действительным.
+	// ReplayWindowSeconds определяет временное окно (в секундах),
+	// в течение которого сообщение считается действительным.
 	// Сообщения старше этого значения будут отклонены.
 	ReplayWindowSeconds = 300 // 5 минут
 
-	// NonceCacheTTL определяет, как долго nonce хранится в кэше перед удалением для экономии памяти.
+	// NonceCacheTTL определяет,
+	// как долго nonce хранится в кэше перед удалением для экономии памяти.
 	// Должно быть значительно больше, чем ReplayWindowSeconds.
 	NonceCacheTTL = time.Hour * 1 // 1 час
 
-	// ClockSkewAllowanceSeconds позволяет принимать сообщения, временная метка которых немного опережает системные часы.
+	// ClockSkewAllowanceSeconds позволяет принимать сообщения,
+	// временная метка которых немного опережает системные часы.
 	// Это компенсирует небольшую рассинхронизацию часов между клиентами.
 	ClockSkewAllowanceSeconds = 60 // 1 минута
 
@@ -81,7 +84,8 @@ type DoubleRatchet struct {
 
 	MKSKIPPED map[string][]byte
 
-	// ReceivedNonces - это кэш для отслеживания использованных nonce и предотвращения replay-атак.
+	// ReceivedNonces - это кэш для отслеживания использованных nonce
+	//  и предотвращения replay-атак.
 	// Ключ - это nonce в виде hex-строки, значение - время получения.
 	ReceivedNonces map[string]time.Time
 }
@@ -150,7 +154,7 @@ func (dr *DoubleRatchet) MarshalJSON() ([]byte, error) {
 		return nil, err
 	}
 
-	// ДОБАВЛЕНО: Перед сохранением очищаем кэш nonce от слишком старых записей,
+	// Перед сохранением очищаем кэш nonce от слишком старых записей,
 	// чтобы не раздувать базу данных.
 	now := time.Now()
 	for key, ts := range dr.ReceivedNonces {
@@ -159,7 +163,7 @@ func (dr *DoubleRatchet) MarshalJSON() ([]byte, error) {
 		}
 	}
 
-	// ИСПРАВЛЕНО: ReceivedNonces теперь сохраняется для защиты от replay-атак после перезапуска.
+	// ReceivedNonces сохраняется для защиты от replay-атак после перезапуска.
 	stored := storedDoubleRatchet{
 		KyberS:         kyberSBytes,
 		KyberR:         kyberRBytes,
@@ -202,9 +206,7 @@ func (dr *DoubleRatchet) UnmarshalJSON(data []byte) error {
 	dr.ECR = (*[32]byte)(stored.ECR)
 	dr.RK, dr.CKs, dr.CKr, dr.Ns, dr.Nr, dr.PN, dr.MKSKIPPED = stored.RK, stored.CKs, stored.CKr, stored.Ns, stored.Nr, stored.PN, stored.MKSKIPPED
 
-	// ИСПРАВЛЕНО: Восстанавливаем кэш nonce из сохраненных данных.
-	// Добавляем проверку на nil для обратной совместимости со старыми состояниями,
-	// где это поле не сохранялось.
+	// Восстанавливаем кэш nonce из сохраненных данных.
 	if stored.ReceivedNonces != nil {
 		dr.ReceivedNonces = stored.ReceivedNonces
 	} else {
@@ -221,8 +223,8 @@ type RatchetHeader struct {
 	PN                uint64 `json:"pn"`
 	N                 uint64 `json:"n"`
 	RatchetCiphertext []byte `json:"ratchet_ct,omitempty"`
-	Nonce             []byte `json:"nonce"`     // Новое поле: уникальный номер сообщения
-	Timestamp         int64  `json:"timestamp"` // Новое поле: время отправки (Unix)
+	Nonce             []byte `json:"nonce"`
+	Timestamp         int64  `json:"timestamp"`
 }
 
 type InitialCiphertexts struct {
@@ -234,7 +236,6 @@ type InitialCiphertexts struct {
 	EphemeralECPublicKey []byte `json:"e_ec_pk"`
 }
 
-// RatchetInitAlice ... (без изменений)
 func RatchetInitAlice(
 	theirIdentityKeyKyber *kyber1024.PublicKey, theirIdentityKeyX25519 *[32]byte,
 	theirSignedPreKeyKyber *kyber1024.PublicKey, theirSignedPreKeyX25519 *[32]byte,
@@ -312,12 +313,11 @@ func RatchetInitAlice(
 		Nr:             0,
 		PN:             0,
 		MKSKIPPED:      make(map[string][]byte),
-		ReceivedNonces: make(map[string]time.Time), // Инициализация кэша
+		ReceivedNonces: make(map[string]time.Time),
 	}
 	return ratchet, initialCts, nil
 }
 
-// RatchetInitBob ... (без изменений, кроме инициализации кэша)
 func RatchetInitBob(
 	ourIdentityPrivKyber *kyber1024.PrivateKey, ourIdentityPrivX25519 *[32]byte,
 	ourPreKeyPrivKyber *kyber1024.PrivateKey, ourPreKeyPrivX25519 *[32]byte,
@@ -396,8 +396,8 @@ func RatchetInitBob(
 	}, nil
 }
 
-// RatchetEncrypt теперь добавляет Nonce и Timestamp в заголовок.
 func (dr *DoubleRatchet) RatchetEncrypt(plaintext []byte, firstMessageCts *InitialCiphertexts) (serializedHeader []byte, ciphertext []byte, err error) {
+
 	var header RatchetHeader
 	kemScheme := kyber1024.Scheme()
 	if dr.CKs == nil {
@@ -453,11 +453,9 @@ func (dr *DoubleRatchet) RatchetEncrypt(plaintext []byte, firstMessageCts *Initi
 	return serializedHeader, ciphertext, nil
 }
 
-// RatchetDecrypt теперь включает защиту от replay-атак.
 func (dr *DoubleRatchet) RatchetDecrypt(headerData []byte, ciphertext []byte) ([]byte, error) {
 	var header RatchetHeader
 	if err := json.Unmarshal(headerData, &header); err != nil {
-		// Попытка парсинга сложного заголовка для первого сообщения
 		var headerWithInitialCts struct {
 			RatchetHeader
 			InitialCiphertexts *InitialCiphertexts `json:"initial_cts,omitempty"`
@@ -545,7 +543,6 @@ func (dr *DoubleRatchet) RatchetDecrypt(headerData []byte, ciphertext []byte) ([
 	return plaintext, nil
 }
 
-// dhRatchetStep ... (без изменений)
 func (dr *DoubleRatchet) dhRatchetStep(header RatchetHeader) error {
 	dr.PN, dr.Ns, dr.Nr, dr.MKSKIPPED = dr.Ns, 0, 0, make(map[string][]byte)
 	kemScheme := kyber1024.Scheme()
@@ -586,7 +583,6 @@ func (dr *DoubleRatchet) dhRatchetStep(header RatchetHeader) error {
 	return nil
 }
 
-// trySkippedMessageKeys ... (без изменений)
 func (dr *DoubleRatchet) trySkippedMessageKeys(header RatchetHeader, headerData []byte, ciphertext []byte) ([]byte, error) {
 	keyID := messageKeyID(header.KyberPublicKey, header.ECPublicKey, header.N)
 	mk, found := dr.MKSKIPPED[keyID]
@@ -601,7 +597,6 @@ func (dr *DoubleRatchet) trySkippedMessageKeys(header RatchetHeader, headerData 
 	return plaintext, nil
 }
 
-// skipMessageKeys ... (без изменений)
 func (dr *DoubleRatchet) skipMessageKeys(until uint64) error {
 	if dr.CKr == nil || dr.Nr >= until {
 		return nil
@@ -624,7 +619,6 @@ func (dr *DoubleRatchet) skipMessageKeys(until uint64) error {
 	return nil
 }
 
-// kdfInitial ... (без изменений)
 func kdfInitial(secrets ...[]byte) []byte {
 	info := []byte("PhantomX3DH_Hybrid_KEM_ECDH")
 	salt := make([]byte, 32)
@@ -641,7 +635,6 @@ func kdfInitial(secrets ...[]byte) []byte {
 	return sk
 }
 
-// kdfRK ... (без изменений)
 func kdfRK(rk, dhOut []byte) (newRK, chainKey []byte) {
 	info := []byte("PhantomRatchet_Hybrid")
 	salt, ikm := rk, dhOut
@@ -651,7 +644,6 @@ func kdfRK(rk, dhOut []byte) (newRK, chainKey []byte) {
 	return derivedKeyMaterial[:32], derivedKeyMaterial[32:]
 }
 
-// kdfCK ... (без изменений)
 func kdfCK(ck []byte) (newCK, msgKey []byte) {
 	mac1 := hmac.New(sha256.New, ck)
 	mac1.Write([]byte{0x01})
@@ -662,12 +654,10 @@ func kdfCK(ck []byte) (newCK, msgKey []byte) {
 	return newCK, msgKey
 }
 
-// messageKeyID ... (без изменений)
 func messageKeyID(kyberPublicKey, ecPublicKey []byte, n uint64) string {
 	return fmt.Sprintf("%s:%s:%d", base64.StdEncoding.EncodeToString(kyberPublicKey), base64.StdEncoding.EncodeToString(ecPublicKey), n)
 }
 
-// GenerateHybridIdentityKeyPair ... (без изменений)
 func GenerateHybridIdentityKeyPair() (diliPriv sign.PrivateKey, diliPub sign.PublicKey, kyberPriv *kyber1024.PrivateKey, kyberPub *kyber1024.PublicKey, ecPriv *[32]byte, ecPub *[32]byte, err error) {
 	diliScheme := mode5.Scheme()
 	diliPub, diliPriv, err = diliScheme.GenerateKey()
@@ -684,7 +674,6 @@ func GenerateHybridIdentityKeyPair() (diliPriv sign.PrivateKey, diliPub sign.Pub
 	return
 }
 
-// GenerateHybridPreKey ... (без изменений)
 func GenerateHybridPreKey() (*kyber1024.PrivateKey, *kyber1024.PublicKey, *[32]byte, *[32]byte, error) {
 	kemScheme := kyber1024.Scheme()
 	pubK, privK, err := kemScheme.GenerateKeyPair()
@@ -698,7 +687,6 @@ func GenerateHybridPreKey() (*kyber1024.PrivateKey, *kyber1024.PublicKey, *[32]b
 	return privK.(*kyber1024.PrivateKey), pubK.(*kyber1024.PublicKey), privEC, pubEC, nil
 }
 
-// generateECKeyPair теперь использует более идиоматичный `ScalarBaseMult`.
 func generateECKeyPair() (*[32]byte, *[32]byte, error) {
 	privKey := new([32]byte)
 	if _, err := io.ReadFull(rand.Reader, privKey[:]); err != nil {
@@ -713,7 +701,6 @@ func generateECKeyPair() (*[32]byte, *[32]byte, error) {
 	return privKey, pubKey, nil
 }
 
-// encryptAEAD ... (без изменений)
 func encryptAEAD(key, plaintext, headerData []byte, n uint64) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -728,7 +715,6 @@ func encryptAEAD(key, plaintext, headerData []byte, n uint64) ([]byte, error) {
 	return gcm.Seal(nonce, nonce, plaintext, headerData), nil
 }
 
-// decryptAEAD ... (без изменений)
 func decryptAEAD(key, ciphertext, headerData []byte, n uint64) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {

@@ -141,6 +141,7 @@ func (t *P2PTransport) Start(usernameHash string) error {
 		libp2p.ConnectionManager(cm),
 		libp2p.EnableHolePunching(),
 		libp2p.EnableRelay(),
+		libp2p.DefaultSecurity,
 		libp2p.ForceReachabilityPrivate(),
 		libp2p.EnableAutoRelayWithStaticRelays(staticRelays),
 	}
@@ -597,7 +598,7 @@ func (t *P2PTransport) ForceFindPeer(usernameHash string) {
 	}
 	t.mu.RUnlock()
 
-	// ОПТИМИЗАЦИЯ: Если пир уже виден (скорее всего через mDNS), не делаем ничего.
+	// Если пир уже виден (скорее всего через mDNS), не делаем ничего.
 	if t.IsP2PAvailable(usernameHash) {
 		t.handler.OnLog(LogLevelInfo, fmt.Sprintf("✅ Пир %s... уже доступен, глобальный поиск пропущен.", truncateHash(usernameHash)))
 		return
@@ -608,8 +609,6 @@ func (t *P2PTransport) ForceFindPeer(usernameHash string) {
 		_ = t.findPeerInDHT(usernameHash)
 	}()
 }
-
-// --- Вспомогательные функции ---
 
 func isLocalAddress(addr string) bool {
 	return containsAny(addr, []string{

@@ -282,7 +282,6 @@ func (c *Core) startP2POnly() error {
 
 	c.loadLocalContactsForP2P()
 
-	// ИСПРАВЛЕНИЕ: Запускаем фоновый мониторинг
 	go c.monitorP2PStatus()
 
 	c.mu.Lock()
@@ -317,11 +316,10 @@ func (c *Core) startP2PTransport() {
 	c.p2pTransport.SetCore(c)
 	c.handler.OnP2PStateChanged(true, c.p2pTransport.GetP2PPeers())
 
-	// ИСПРАВЛЕНИЕ: Запускаем фоновый мониторинг
 	go c.monitorP2PStatus()
 }
 
-// НОВАЯ ФУНКЦИЯ: monitorP2PStatus периодически ищет оффлайн-контакты.
+// monitorP2PStatus периодически ищет оффлайн-контакты.
 func (c *Core) monitorP2PStatus() {
 	// Даем время на первоначальное объявление в сети
 	time.Sleep(5 * time.Second)
@@ -489,10 +487,8 @@ func (c *Core) GetContacts() ([]ContactInfo, error) {
 		return nil, fmt.Errorf("не удалось загрузить контакты из БД: %w", err)
 	}
 
-	// === НАЧАЛО ИСПРАВЛЕНИЯ: Обеспечение уникальности ===
 	// Используем map для хранения уникальных контактов по их хэшу
 	uniqueContacts := make(map[string]ContactInfo)
-	// === КОНЕЦ ИСПРАВЛЕНИЯ ===
 
 	for _, name := range usernames {
 		var hash string
@@ -519,12 +515,10 @@ func (c *Core) GetContacts() ([]ContactInfo, error) {
 		uniqueContacts[hash] = contact // Добавляем или перезаписываем контакт в map
 	}
 
-	// === НАЧАЛО ИСПРАВЛЕНИЯ: Преобразование map в slice ===
 	var contacts []ContactInfo
 	for _, contact := range uniqueContacts {
 		contacts = append(contacts, contact)
 	}
-	// === КОНЕЦ ИСПРАВЛЕНИЯ ===
 
 	return contacts, nil
 }
@@ -582,10 +576,6 @@ func (c *Core) StartNewChat(peerUsername string) error {
 		}
 		c.handler.OnLog(LogLevelInfo, fmt.Sprintf("✅ Контакт %s добавлен локально (P2P)", peerUsername))
 		c.loadLocalContacts()
-
-		// **КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: УБИРАЕМ ПРЕЖДЕВРЕМЕННЫЙ ПОИСК**
-		// c.p2pTransport.ForceFindPeer(peerHash) // <--- ЭТА СТРОКА УДАЛЕНА
-		// Теперь фоновый monitorP2PStatus сам найдет контакт, отдав приоритет mDNS.
 
 		return nil
 	}

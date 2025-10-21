@@ -23,8 +23,7 @@ import (
 // CustomBootstrapPeers содержит список ваших личных bootstrap- и relay-узлов.
 var CustomBootstrapPeers []multiaddr.Multiaddr
 
-// ЗАМЕНИТЕ ЭТОТ АДРЕС НА АДРЕС ВАШЕГО СЕРВЕРА
-const myBootstrapNode = "/ip4/80.74.27.30/tcp/4001/p2p/12D3KooWAztrFtmsKXKgc14D9YaqphGZxndoA63pjCDJ8qPfaLZJ"
+const myBootstrapNode = "/ip4/{ip}/tcp/4001/p2p/{hash}"
 
 func init() {
 	// Создаем наш главный узел

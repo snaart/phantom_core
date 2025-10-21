@@ -187,7 +187,7 @@ func (ks *KeyStore) Unlock(pin string) error {
 		return errors.New("неверный PIN-код")
 	}
 
-	// ✅ ИСПРАВЛЕНИЕ: Используем ConstantTimeCompare для защиты от timing-атак.
+	// Используем ConstantTimeCompare для защиты от timing-атак.
 	// Функция возвращает 1, если срезы равны, и 0 в противном случае.
 	if subtle.ConstantTimeCompare(decryptedCheck, []byte(pinCheckConstant)) != 1 {
 		return errors.New("неверный PIN-код")
@@ -357,7 +357,7 @@ func (ks *KeyStore) LoadContact(usernameHash string) (*Contact, error) {
 	return contact, nil
 }
 
-// LoadContactByUsername НОВЫЙ МЕТОД: Загрузка контакта по имени
+// LoadContactByUsername Загрузка контакта по имени
 func (ks *KeyStore) LoadContactByUsername(username string) (*Contact, error) {
 	ks.mu.Lock()
 	defer ks.mu.Unlock()
