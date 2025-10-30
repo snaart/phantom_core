@@ -811,7 +811,10 @@ func (c *logicClient) sendMessage(peerHash, text string) error {
 
 		err := c.sendEncryptedPacket(peerHash, text, &ratchet, nil)
 		if err == nil {
-			c.ms.SaveMessage(peerHash, true, time.Now().Unix(), text)
+			err := c.ms.SaveMessage(peerHash, true, time.Now().Unix(), text)
+			if err != nil {
+				return err
+			}
 		}
 		return err
 	}
@@ -1201,7 +1204,7 @@ func (c *logicClient) sendP2PUpdate() error {
 func (c *logicClient) replenishOPKsAndReregister() {
 	err := c.ks.WithUserAccount(c.username, func(ua *UserAccount) error {
 		c.handler.OnLog(LogLevelInfo, "Пополнение OPK...")
-		newAccount, err := c.ks.ReplenishOPKs(c.username, ua)
+		newAccount, err := c.ks.ReplenishOPKs(ua)
 		if err != nil {
 			return fmt.Errorf("ошибка пополнения OPK в локальной БД: %v", err)
 		}
@@ -1315,7 +1318,10 @@ func getHashesFromServerSecurely(myUsername, destUsername string, tlsConfig *tls
 		}
 
 		if err := forceConnection(conn, timeout, handler); err != nil {
-			conn.Close()
+			err := conn.Close()
+			if err != nil {
+				return "", "", err
+			}
 			if attempt == maxAttempts {
 				return "", "", fmt.Errorf("тест соединения не прошел после %d попыток: %v", maxAttempts, err)
 			}
@@ -1336,7 +1342,10 @@ func getHashesFromServerSecurely(myUsername, destUsername string, tlsConfig *tls
 		myFinalHashResp, err := authClient.GetFinalHash(ctx, &proto2.FinalHashRequest{LocalHash: myLocalHash.Sum(nil)})
 		if err != nil {
 			cancel()
-			conn.Close()
+			err := conn.Close()
+			if err != nil {
+				return "", "", err
+			}
 			if attempt == maxAttempts {
 				return "", "", fmt.Errorf("ошибка получения финального хэша для %s после %d попыток: %w", myUsername, maxAttempts, err)
 			}
@@ -1348,7 +1357,10 @@ func getHashesFromServerSecurely(myUsername, destUsername string, tlsConfig *tls
 		destFinalHashResp, err := authClient.GetFinalHash(ctx, &proto2.FinalHashRequest{LocalHash: destLocalHash.Sum(nil)})
 		if err != nil {
 			cancel()
-			conn.Close()
+			err := conn.Close()
+			if err != nil {
+				return "", "", err
+			}
 			if attempt == maxAttempts {
 				return "", "", fmt.Errorf("ошибка получения финального хэша для %s после %d попыток: %w", destUsername, maxAttempts, err)
 			}
@@ -1358,7 +1370,10 @@ func getHashesFromServerSecurely(myUsername, destUsername string, tlsConfig *tls
 		}
 
 		cancel()
-		conn.Close()
+		err = conn.Close()
+		if err != nil {
+			return "", "", err
+		}
 		return myFinalHashResp.FinalHash, destFinalHashResp.FinalHash, nil
 	}
 

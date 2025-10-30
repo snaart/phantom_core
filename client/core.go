@@ -122,7 +122,10 @@ func NewCore(username, pin, basePath string, handler CoreEventHandler) (*Core, e
 	}
 	ms, err := NewMessageStore(filepath.Join(basePath, "messagestore.db"))
 	if err != nil {
-		ks.Close()
+		err := ks.Close()
+		if err != nil {
+			return nil, err
+		}
 		return nil, fmt.Errorf("ошибка создания MessageStore: %w", err)
 	}
 
@@ -215,9 +218,15 @@ func (c *Core) Start(transport TransportProtocol) error {
 	phantomClient := pb.NewPhantomClient(grpcConn)
 	stream, err := phantomClient.Transmit(context.Background())
 	if err != nil {
-		grpcConn.Close()
+		err := grpcConn.Close()
+		if err != nil {
+			return err
+		}
 		if transportCloser != nil {
-			transportCloser.Close()
+			err := transportCloser.Close()
+			if err != nil {
+				return err
+			}
 		}
 		return fmt.Errorf("не удалось создать gRPC-стрим: %w", err)
 	}
@@ -233,7 +242,10 @@ func (c *Core) Start(transport TransportProtocol) error {
 	go c.logicClient.startProcessing(stream, tlsConfig, readyChan)
 
 	if err := <-readyChan; err != nil {
-		c.Stop()
+		err := c.Stop()
+		if err != nil {
+			return err
+		}
 		return fmt.Errorf("не удалось запустить логику ядра: %w", err)
 	}
 
@@ -394,31 +406,46 @@ func (c *Core) updateContactsP2PStatus() {
 }
 
 // Stop останавливает ядро
-func (c *Core) Stop() {
+func (c *Core) Stop() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.isStarted {
-		return
+		return nil
 	}
 	c.handler.OnLog(LogLevelInfo, "Остановка ядра...")
 	if c.p2pTransport != nil {
-		c.p2pTransport.Stop()
+		err := c.p2pTransport.Stop()
+		if err != nil {
+			return err
+		}
 		c.handler.OnP2PStateChanged(false, []string{})
 	}
 	if c.logicClient != nil {
 		c.logicClient.shutdown()
 	}
 	if c.grpcConn != nil {
-		c.grpcConn.Close()
+		err := c.grpcConn.Close()
+		if err != nil {
+			return err
+		}
 	}
 	if c.transportCloser != nil {
-		c.transportCloser.Close()
+		err := c.transportCloser.Close()
+		if err != nil {
+			return err
+		}
 	}
 	if c.ks != nil {
-		c.ks.Close()
+		err := c.ks.Close()
+		if err != nil {
+			return err
+		}
 	}
 	if c.ms != nil {
-		c.ms.Close()
+		err := c.ms.Close()
+		if err != nil {
+			return err
+		}
 	}
 	c.isStarted = false
 	c.logicClient = nil
@@ -427,12 +454,17 @@ func (c *Core) Stop() {
 	c.tlsConfig = nil
 	c.handler.OnLog(LogLevelInfo, "Ядро остановлено.")
 	c.handler.OnShutdown("Ядро остановлено")
+
+	return nil
 }
 
 // Restart перезапускает ядро
 func (c *Core) Restart(transport TransportProtocol) error {
 	c.handler.OnLog(LogLevelInfo, fmt.Sprintf("Перезапуск ядра с транспортом: %s", transport.String()))
-	c.Stop()
+	err := c.Stop()
+	if err != nil {
+		return err
+	}
 	time.Sleep(1 * time.Second)
 	return c.Start(transport)
 }
@@ -668,8 +700,10 @@ func (c *Core) calculateP2PHashWithSharedSecret(contactHash, contactName string)
 		return "", fmt.Errorf("публичный ключ X25519 контакта отсутствует")
 	}
 	theirPublicKey = contact.IdentityPublicX25519
-	var sharedSecret [32]byte
-	curve25519.ScalarMult(&sharedSecret, myPrivateKey, theirPublicKey)
+	sharedSecret, err := curve25519.X25519(myPrivateKey[:], theirPublicKey[:])
+	if err != nil {
+		return "", fmt.Errorf("не удалось вычислить общий секрет X25519: %w", err)
+	}
 	firstRoundHash := c.calculateLocalHash(contactName)
 	secondRoundHMAC := hmac.New(sha256.New, sharedSecret[:])
 	secondRoundHMAC.Write([]byte(firstRoundHash))

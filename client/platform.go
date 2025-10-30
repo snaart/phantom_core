@@ -16,7 +16,6 @@ package phantomcore
 
 import (
 	"runtime"
-	"strings"
 )
 
 // Определение платформы для оптимизации P2P конфигурации
@@ -55,27 +54,6 @@ func isDesktop() bool {
 		return !isMobile()
 	default:
 		return false
-	}
-}
-
-// getPlatformString возвращает строковое представление платформы
-func getPlatformString() string {
-	if isAndroid() {
-		return "Android"
-	}
-	if isIOS() {
-		return "iOS"
-	}
-
-	switch runtime.GOOS {
-	case "windows":
-		return "Windows"
-	case "darwin":
-		return "macOS"
-	case "linux":
-		return "Linux"
-	default:
-		return strings.Title(runtime.GOOS)
 	}
 }
 

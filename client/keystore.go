@@ -294,7 +294,7 @@ func (ks *KeyStore) loadAccount(username string) (*UserAccount, error) {
 	return account, nil
 }
 
-func (ks *KeyStore) ReplenishOPKs(username string, account *UserAccount) (*UserAccount, error) {
+func (ks *KeyStore) ReplenishOPKs(account *UserAccount) (*UserAccount, error) {
 	account.OneTimePreKeys = make(map[uint32]OneTimePreKey)
 	if err := ks.generateOPKs(account); err != nil {
 		return nil, err

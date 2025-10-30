@@ -83,7 +83,10 @@ func createTCPConnection(tlsConfig *tls.Config, timeout time.Duration, handler C
 	}
 
 	if err := forceConnection(conn, timeout, handler); err != nil {
-		conn.Close()
+		err := conn.Close()
+		if err != nil {
+			return nil, err
+		}
 		handler.OnLog(LogLevelError, fmt.Sprintf("❌ [TCP] Ошибка forceConnection: %v", err))
 		return nil, fmt.Errorf("установка TCP соединения: %w", err)
 	}

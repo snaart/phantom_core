@@ -146,32 +146,38 @@ func (t *P2PTransport) Start(usernameHash string) error {
 		libp2p.EnableAutoRelayWithStaticRelays(staticRelays),
 	}
 
-	host, err := libp2p.New(opts...)
+	hosted, err := libp2p.New(opts...)
 	if err != nil {
 		return fmt.Errorf("не удалось создать libp2p хост: %w", err)
 	}
-	t.host = host
+	t.host = hosted
 
-	t.handler.OnLog(LogLevelInfo, fmt.Sprintf("✅ P2P хост создан. PeerID: %s", host.ID().String()))
-	for _, addr := range host.Addrs() {
-		t.handler.OnLog(LogLevelInfo, fmt.Sprintf("📍 Listening on: %s/p2p/%s", addr, host.ID()))
+	t.handler.OnLog(LogLevelInfo, fmt.Sprintf("✅ P2P хост создан. PeerID: %s", hosted.ID().String()))
+	for _, addr := range hosted.Addrs() {
+		t.handler.OnLog(LogLevelInfo, fmt.Sprintf("📍 Listening on: %s/p2p/%s", addr, hosted.ID()))
 	}
 
-	kadDHT, err := dht.New(t.ctx, host, dht.Mode(dht.ModeAutoServer))
+	kadDHT, err := dht.New(t.ctx, hosted, dht.Mode(dht.ModeAutoServer))
 	if err != nil {
-		host.Close()
+		err := hosted.Close()
+		if err != nil {
+			return err
+		}
 		return fmt.Errorf("не удалось создать DHT: %w", err)
 	}
 	t.dht = kadDHT
 
 	if err := kadDHT.Bootstrap(t.ctx); err != nil {
-		host.Close()
+		err := hosted.Close()
+		if err != nil {
+			return err
+		}
 		return fmt.Errorf("не удалось выполнить bootstrap DHT: %w", err)
 	}
 
 	for _, pi := range staticRelays {
 		go func(pi peer.AddrInfo) {
-			if err := host.Connect(t.ctx, pi); err == nil {
+			if err := hosted.Connect(t.ctx, pi); err == nil {
 				t.handler.OnLog(LogLevelInfo, fmt.Sprintf("✅ Подключен к bootstrap узлу: %s", pi.ID))
 			} else {
 				t.handler.OnLog(LogLevelWarning, fmt.Sprintf("⚠️ Не удалось подключиться к bootstrap узлу %s: %v", pi.ID, err))
@@ -179,9 +185,9 @@ func (t *P2PTransport) Start(usernameHash string) error {
 		}(pi)
 	}
 
-	host.SetStreamHandler(protocol.ID(ProtocolID), t.handleStream)
+	hosted.SetStreamHandler(ProtocolID, t.handleStream)
 
-	mdnsService := mdns.NewMdnsService(host, DiscoveryNamespace, t)
+	mdnsService := mdns.NewMdnsService(hosted, DiscoveryNamespace, t)
 	if err := mdnsService.Start(); err != nil {
 		t.handler.OnLog(LogLevelWarning, fmt.Sprintf("⚠️ Не удалось запустить mDNS: %v", err))
 	} else {
@@ -199,39 +205,53 @@ func (t *P2PTransport) Start(usernameHash string) error {
 }
 
 // Stop останавливает P2P транспорт
-func (t *P2PTransport) Stop() {
+func (t *P2PTransport) Stop() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	if !t.isRunning {
-		return
+		return nil
 	}
 	t.handler.OnLog(LogLevelInfo, "🛑 Остановка P2P транспорта...")
 
 	t.peersMu.Lock()
-	for _, peer := range t.peers {
-		if peer.Stream != nil {
-			peer.Stream.Close()
+	for _, one_peer := range t.peers {
+		if one_peer.Stream != nil {
+			err := one_peer.Stream.Close()
+			if err != nil {
+				return err
+			}
 		}
 	}
 	t.peers = make(map[string]*P2PeerInfo)
 	t.peersMu.Unlock()
 
 	if t.discovery != nil {
-		t.discovery.service.Close()
+		err := t.discovery.service.Close()
+		if err != nil {
+			return err
+		}
 	}
 
 	if t.dht != nil {
-		t.dht.Close()
+		err := t.dht.Close()
+		if err != nil {
+			return err
+		}
 	}
 
 	if t.host != nil {
-		t.host.Close()
+		err := t.host.Close()
+		if err != nil {
+			return err
+		}
 	}
 
 	t.cancel()
 	t.isRunning = false
 	t.handler.OnLog(LogLevelInfo, "✅ P2P транспорт остановлен")
+
+	return nil
 }
 
 // SendPacket отправляет пакет через P2P
@@ -361,14 +381,20 @@ func (t *P2PTransport) sendToPeer(peerInfo *P2PeerInfo, packet *pb.Packet) error
 
 	length := uint32(len(packetData))
 	if err := binary.Write(peerInfo.Stream, binary.BigEndian, length); err != nil {
-		peerInfo.Stream.Reset()
+		err := peerInfo.Stream.Reset()
+		if err != nil {
+			return err
+		}
 		peerInfo.Stream = nil
 		t.removePeer(peerInfo.UsernameHash)
 		return fmt.Errorf("не удалось отправить длину сообщения: %w", err)
 	}
 
 	if _, err := peerInfo.Stream.Write(packetData); err != nil {
-		peerInfo.Stream.Reset()
+		err := peerInfo.Stream.Reset()
+		if err != nil {
+			return err
+		}
 		peerInfo.Stream = nil
 		t.removePeer(peerInfo.UsernameHash)
 		return fmt.Errorf("не удалось отправить тело сообщения: %w", err)
@@ -542,7 +568,7 @@ func (t *P2PTransport) removePeer(usernameHash string) {
 }
 
 // cleanupPeers удаляет устаревших пиров
-func (t *P2PTransport) cleanupPeers() {
+func (t *P2PTransport) cleanupPeers() error {
 	t.peersMu.Lock()
 	defer t.peersMu.Unlock()
 
@@ -550,24 +576,31 @@ func (t *P2PTransport) cleanupPeers() {
 	for hash, info := range t.peers {
 		if info.LastSeen.Before(cutoff) {
 			if info.Stream != nil {
-				info.Stream.Close()
+				err := info.Stream.Close()
+				if err != nil {
+					return err
+				}
 			}
 			delete(t.peers, hash)
 			t.handler.OnLog(LogLevelInfo, fmt.Sprintf("🗑️ Пир %s удален (неактивен)", truncateHash(hash)))
 		}
 	}
+	return nil
 }
 
 // maintainPeers поддерживает соединения с пирами
-func (t *P2PTransport) maintainPeers() {
+func (t *P2PTransport) maintainPeers() error {
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
-			t.cleanupPeers()
+			err := t.cleanupPeers()
+			if err != nil {
+				return err
+			}
 		case <-t.ctx.Done():
-			return
+			return nil
 		}
 	}
 }
