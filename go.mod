@@ -7,15 +7,12 @@ toolchain go1.24.5
 require (
 	github.com/cloudflare/circl v1.6.1
 	github.com/gen2brain/beeep v0.11.1
-	github.com/gorilla/mux v1.8.1
-	github.com/gorilla/websocket v1.5.3
 	github.com/ipfs/go-cid v0.5.0
 	github.com/libp2p/go-libp2p v0.43.0
 	github.com/libp2p/go-libp2p-kad-dht v0.34.0
 	github.com/multiformats/go-multiaddr v0.16.1
 	github.com/multiformats/go-multihash v0.2.3
-	github.com/quic-go/quic-go v0.54.0
-	github.com/rs/cors v1.11.1
+	github.com/quic-go/quic-go v0.54.1
 	golang.org/x/crypto v0.41.0
 	google.golang.org/grpc v1.74.2
 	google.golang.org/protobuf v1.36.8
@@ -41,6 +38,7 @@ require (
 	github.com/google/gopacket v1.1.19 // indirect
 	github.com/google/pprof v0.0.0-20250607225305-033d6d78b36a // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/hashicorp/golang-lru v1.0.2 // indirect
 	github.com/huin/goupnp v1.3.0 // indirect
 	github.com/ipfs/boxo v0.34.0 // indirect
