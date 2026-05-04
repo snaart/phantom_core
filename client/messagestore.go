@@ -33,8 +33,14 @@ type MessageStore struct {
 	db     *sql.DB
 	path   string
 	encKey []byte
+	salt   []byte
 	mu     sync.Mutex
 }
+
+const (
+// dbSaltMetadataKey moved to common.go
+// Argon2 params moved to common.go
+)
 
 type StoredMessage struct {
 	SessionHash string
@@ -55,9 +61,17 @@ func NewMessageStore(path string) (*MessageStore, error) {
 }
 
 func (ms *MessageStore) Initialize(pin string) error {
-	ms.encKey = argon2.IDKey([]byte(pin), []byte(dbEncryptionSalt), argon2Time, argon2Memory, argon2Threads, argon2KeyLen)
+	// Генерируем случайную соль
+	salt := make([]byte, 16)
+	if _, err := rand.Read(salt); err != nil {
+		return fmt.Errorf("не удалось сгенерировать соль: %w", err)
+	}
+	ms.salt = salt
+	ms.encKey = argon2.IDKey([]byte(pin), ms.salt, argon2Time, argon2Memory, argon2Threads, argon2KeyLen)
+
 	ms.mu.Lock()
 	defer ms.mu.Unlock()
+
 	createTable := `
     CREATE TABLE IF NOT EXISTS messages (
        id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,15 +82,31 @@ func (ms *MessageStore) Initialize(pin string) error {
        nonce BLOB NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_session_hash_timestamp ON messages (session_hash, timestamp);
+	CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value BLOB);
     `
 	if _, err := ms.db.Exec(createTable); err != nil {
 		return err
 	}
+
+	if _, err := ms.db.Exec("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)", dbSaltMetadataKey, ms.salt); err != nil {
+		return err
+	}
+
 	return nil
 }
 
-func (ms *MessageStore) Unlock(pin string) {
-	ms.encKey = argon2.IDKey([]byte(pin), []byte(dbEncryptionSalt), argon2Time, argon2Memory, argon2Threads, argon2KeyLen)
+func (ms *MessageStore) Unlock(pin string) error {
+	var salt []byte
+	err := ms.db.QueryRow("SELECT value FROM config WHERE key = ?", dbSaltMetadataKey).Scan(&salt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) || err.Error() == "no such table: config" {
+			return errors.New("база данных не инициализирована или повреждена (нет соли)")
+		}
+		return fmt.Errorf("не удалось прочитать соль: %w", err)
+	}
+	ms.salt = salt
+	ms.encKey = argon2.IDKey([]byte(pin), ms.salt, argon2Time, argon2Memory, argon2Threads, argon2KeyLen)
+	return nil
 }
 
 func (ms *MessageStore) SaveMessage(sessionHash string, isOutgoing bool, timestamp int64, content string) error {

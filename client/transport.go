@@ -15,6 +15,7 @@
 package phantomcore
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
@@ -26,14 +27,17 @@ import (
 	"strings"
 	"time"
 
+	pb "phantom/proto"
+
 	"github.com/quic-go/quic-go"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/status"
 )
 
 const (
-	serverAddress = "{ip_example}"
-
+	// serverAddress removed, passed as argument
 	// Таймауты для подключения
 	connectTimeoutTCP  = 10 * time.Second
 	connectTimeoutQUIC = 5 * time.Second
@@ -68,12 +72,12 @@ func (c *quicStreamConn) SetWriteDeadline(t time.Time) error {
 //}
 
 // createTCPConnection создает обычное TCP соединение.
-func createTCPConnection(tlsConfig *tls.Config, timeout time.Duration, handler CoreEventHandler) (*grpc.ClientConn, error) {
+func createTCPConnection(serverAddr string, tlsConfig *tls.Config, timeout time.Duration, handler CoreEventHandler) (*grpc.ClientConn, error) {
 	handler.OnLog(LogLevelInfo, "📡 [TCP] Начало установки TCP соединения...")
 	creds := credentials.NewTLS(tlsConfig)
 
 	conn, err := grpc.NewClient(
-		serverAddress,
+		serverAddr,
 		grpc.WithTransportCredentials(creds),
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(10*1024*1024)),
 	)
@@ -158,11 +162,13 @@ func createTCPConnection(tlsConfig *tls.Config, timeout time.Duration, handler C
 
 // tryConnect пытается подключиться с учетом выбранного транспорта.
 // Возвращает gRPC соединение, io.Closer для низкоуровневого транспорта и имя транспорта.
-func tryConnect(transport TransportProtocol, tlsConfig *tls.Config, handler CoreEventHandler) (*grpc.ClientConn, io.Closer, string, error) {
+// tryConnect пытается подключиться с учетом выбранного транспорта.
+// Возвращает gRPC соединение, io.Closer для низкоуровневого транспорта и имя транспорта.
+func tryConnect(transport TransportProtocol, serverAddr string, tlsConfig *tls.Config, handler CoreEventHandler) (*grpc.ClientConn, io.Closer, string, error) {
 	switch transport {
 	case TCP:
 		handler.OnLog(LogLevelInfo, "🔌 Попытка подключения через TCP...")
-		conn, err := createTCPConnection(tlsConfig, connectTimeoutTCP, handler)
+		conn, err := createTCPConnection(serverAddr, tlsConfig, connectTimeoutTCP, handler)
 		if err != nil {
 			return nil, nil, "", fmt.Errorf("TCP подключение не удалось: %w", err)
 		}
@@ -183,7 +189,7 @@ func tryConnect(transport TransportProtocol, tlsConfig *tls.Config, handler Core
 		//}
 		//handler.OnLog(LogLevelWarning, fmt.Sprintf("⚠️ QUIC не удался: %v", err))
 		handler.OnLog(LogLevelInfo, "📡 Переключение на резервный канал TCP...")
-		tcpConn, err := createTCPConnection(tlsConfig, connectTimeoutTCP, handler)
+		tcpConn, err := createTCPConnection(serverAddr, tlsConfig, connectTimeoutTCP, handler)
 		if err != nil {
 			return nil, nil, "", fmt.Errorf("оба канала не удались. QUIC: см. выше, TCP: %w", err)
 		}
@@ -195,7 +201,7 @@ func tryConnect(transport TransportProtocol, tlsConfig *tls.Config, handler Core
 }
 
 // loadTLSCredentials загружает TLS сертификат и создает конфигурацию.
-func loadTLSCredentials(handler CoreEventHandler) (*tls.Config, error) {
+func loadTLSCredentials(serverAddr string, handler CoreEventHandler) (*tls.Config, error) {
 	handler.OnLog(LogLevelInfo, "🔐 [TLS] Начало загрузки TLS сертификатов...")
 	certPath := "server.crt"
 	pemServerCA, err := os.ReadFile(certPath)
@@ -232,7 +238,12 @@ func loadTLSCredentials(handler CoreEventHandler) (*tls.Config, error) {
 	}
 	handler.OnLog(LogLevelInfo, "✅ [TLS] Сертификат успешно добавлен в пул доверенных.")
 
-	serverName := strings.Split(serverAddress, ":")[0]
+	serverName := strings.Split(serverAddr, ":")[0]
+	// This function loadTLSCredentials doesn't take serverAddr.
+	// It reads server.crt.
+	// We can remove the serverName check against serverAddress or pass serverAddr to this function too.
+	// For now, let's just use "localhost" or skip this check if serverAddress is not available.
+	// Or better, update loadTLSCredentials to take serverAddr.
 	handler.OnLog(LogLevelInfo, fmt.Sprintf("ℹ️ [TLS] Имя хоста из адреса сервера: %s", serverName))
 
 	if len(cert.DNSNames) > 0 {
@@ -263,4 +274,31 @@ func loadTLSCredentials(handler CoreEventHandler) (*tls.Config, error) {
 
 	handler.OnLog(LogLevelInfo, fmt.Sprintf("✅ [TLS] TLS конфигурация создана (ServerName: %s, MinVersion: TLS 1.3)", config.ServerName))
 	return config, nil
+}
+
+// forceConnection принудительно проверяет соединение
+func forceConnection(conn *grpc.ClientConn, timeout time.Duration, handler CoreEventHandler) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	// Используем Auth сервис для проверки соединения (Ping или GetP2PInfo с пустым токеном)
+	// Но у нас нет Ping. Попробуем GetP2PInfo с заведомо несуществующим токеном.
+	client := pb.NewAuthClient(conn)
+	_, err := client.GetP2PInfo(ctx, &pb.P2PInfoRequest{RoutingToken: []byte("ping")})
+
+	// Если ошибка "Unimplemented" или "NotFound", значит соединение есть.
+	// Если ошибка сети - значит нет.
+	if err != nil {
+		st, ok := status.FromError(err)
+		if ok {
+			// Если мы получили статус код (даже ошибку), значит соединение с сервером есть.
+			// Unimplemented - метод не реализован (но сервер ответил).
+			// NotFound - тоже ответ сервера.
+			if st.Code() == codes.Unimplemented || st.Code() == codes.NotFound || st.Code() == codes.PermissionDenied {
+				return nil
+			}
+		}
+		return err
+	}
+	return nil
 }

@@ -27,13 +27,13 @@ const myBootstrapNode = "/ip4/{ip_example}/tcp/4001/p2p/{hash_example}"
 
 func init() {
 	// Создаем наш главный узел
-	addr, err := multiaddr.NewMultiaddr(myBootstrapNode)
-	if err != nil {
-		panic(err)
-	}
+	// addr, err := multiaddr.NewMultiaddr(myBootstrapNode)
+	// if err != nil {
+	// 	panic(err)
+	// }
 
 	// Начинаем список с НАШЕГО узла, делая его приоритетным
-	CustomBootstrapPeers = []multiaddr.Multiaddr{addr}
+	// CustomBootstrapPeers = []multiaddr.Multiaddr{addr}
 
 	// ДОБАВЛЯЕМ публичные узлы как запасной вариант для построения здоровой DHT
 	CustomBootstrapPeers = append(CustomBootstrapPeers, dht.DefaultBootstrapPeers...)

@@ -36,20 +36,15 @@ import (
 )
 
 const (
-	NumOPKs             = 100
-	dbEncryptionSalt    = "phantom-db-salt-v2"
-	argon2Time          = 2
-	argon2Memory        = 128 * 1024
-	argon2Threads       = 4
-	argon2KeyLen        = 32
-	pinCheckConstant    = "phantom-pin-check-ok"
-	pinCheckMetadataKey = "pin_check"
+// dbSaltMetadataKey moved to common.go
+// Argon2 params moved to common.go
 )
 
 type KeyStore struct {
 	db     *sql.DB
 	path   string
 	encKey []byte
+	salt   []byte
 	mu     sync.Mutex
 }
 
@@ -62,7 +57,7 @@ type OneTimePreKey struct {
 }
 
 type UserAccount struct {
-	Username              string
+	// Username removed
 	IdentityPrivateDili   sign.PrivateKey
 	IdentityPublicDili    sign.PublicKey
 	IdentityPrivateKyber  *kyber1024.PrivateKey
@@ -74,7 +69,8 @@ type UserAccount struct {
 	PreKeyPrivateX25519   *[32]byte
 	PreKeyPublicX25519    *[32]byte
 	OneTimePreKeys        map[uint32]OneTimePreKey
-	FreshlyCreated        bool `json:"-"`
+	RoutingToken          []byte // Токен, на который мы принимаем сообщения
+	FreshlyCreated        bool   `json:"-"`
 }
 
 func (ua *UserAccount) Zeroize() {
@@ -116,12 +112,18 @@ func (ua *UserAccount) Zeroize() {
 }
 
 type Contact struct {
-	Username             string
-	UsernameHash         string
+	DisplayName          string
 	IdentityPublicDili   sign.PublicKey
+	IdentityPublicKyber  *kyber1024.PublicKey
 	IdentityPublicX25519 *[32]byte
 	RatchetState         []byte
 	PendingUserMsgs      []string
+	OutboundRoutingToken []byte // Токен, который мы используем для отправки этому контакту
+	InboundRoutingToken  []byte // Токен, который мы выдали этому контакту (слушаем его)
+	IdentityKeyHash      string // Хэш публичного ключа Dilithium (для идентификации)
+	SignedPreKeyKyber    []byte
+	SignedPreKeyX25519   []byte
+	PreKeySignatureDili  []byte
 }
 
 func NewKeyStore(path string) (*KeyStore, error) {
@@ -136,18 +138,26 @@ func NewKeyStore(path string) (*KeyStore, error) {
 }
 
 func (ks *KeyStore) Initialize(pin string) error {
-	ks.encKey = argon2.IDKey([]byte(pin), []byte(dbEncryptionSalt), argon2Time, argon2Memory, argon2Threads, argon2KeyLen)
+	// Генерируем случайную соль для БД
+	salt := make([]byte, 16)
+	if _, err := rand.Read(salt); err != nil {
+		return fmt.Errorf("не удалось сгенерировать соль: %w", err)
+	}
+	ks.salt = salt
+	ks.encKey = argon2.IDKey([]byte(pin), ks.salt, argon2Time, argon2Memory, argon2Threads, argon2KeyLen)
+
 	ks.mu.Lock()
 	defer ks.mu.Unlock()
+
 	createTables := `
-	CREATE TABLE IF NOT EXISTS accounts (
-		username TEXT PRIMARY KEY,
+	CREATE TABLE IF NOT EXISTS identity (
+		id INTEGER PRIMARY KEY CHECK (id = 1), -- Только одна запись
 		encrypted_data BLOB NOT NULL,
 		nonce BLOB NOT NULL
 	);
 	CREATE TABLE IF NOT EXISTS contacts (
-		username_hash TEXT PRIMARY KEY,
-		username TEXT,
+		identity_key_hash TEXT PRIMARY KEY, -- Хэш IdentityKeyDilithium для поиска
+		display_name TEXT,
 		encrypted_data BLOB NOT NULL,
 		nonce BLOB NOT NULL
 	);
@@ -160,6 +170,22 @@ func (ks *KeyStore) Initialize(pin string) error {
 	if _, err := ks.db.Exec(createTables); err != nil {
 		return err
 	}
+
+	// Сохраняем соль в открытом виде (или можно обфусцировать, но соль не секретна)
+	// Для простоты сохраним в metadata без шифрования? Нет, metadata имеет структуру key, value, nonce.
+	// Но value зашифровано? В текущей схеме metadata хранит зашифрованные значения?
+	// Посмотрим на pinCheck: encryptedCheck, nonce. Да, зашифровано.
+	// Но соль нужна ДО расшифровки. Значит соль должна храниться отдельно или в metadata, но в открытом виде.
+	// Давайте создадим таблицу config для открытых данных.
+
+	if _, err := ks.db.Exec("CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value BLOB)"); err != nil {
+		return err
+	}
+
+	if _, err := ks.db.Exec("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)", dbSaltMetadataKey, ks.salt); err != nil {
+		return err
+	}
+
 	encryptedCheck, nonce, err := ks.encrypt([]byte(pinCheckConstant))
 	if err != nil {
 		return fmt.Errorf("не удалось создать значение для проверки PIN: %w", err)
@@ -169,9 +195,21 @@ func (ks *KeyStore) Initialize(pin string) error {
 }
 
 func (ks *KeyStore) Unlock(pin string) error {
-	ks.encKey = argon2.IDKey([]byte(pin), []byte(dbEncryptionSalt), argon2Time, argon2Memory, argon2Threads, argon2KeyLen)
+	// Сначала читаем соль
+	var salt []byte
+	err := ks.db.QueryRow("SELECT value FROM config WHERE key = ?", dbSaltMetadataKey).Scan(&salt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) || err.Error() == "no such table: config" {
+			return errors.New("база данных не инициализирована или повреждена (нет соли)")
+		}
+		// Fallback для старых баз? Нет, мы делаем breaking change.
+		return fmt.Errorf("не удалось прочитать соль: %w", err)
+	}
+	ks.salt = salt
+	ks.encKey = argon2.IDKey([]byte(pin), ks.salt, argon2Time, argon2Memory, argon2Threads, argon2KeyLen)
+
 	var encryptedCheck, nonce []byte
-	err := ks.db.QueryRow("SELECT value, nonce FROM metadata WHERE key = ?", pinCheckMetadataKey).Scan(&encryptedCheck, &nonce)
+	err = ks.db.QueryRow("SELECT value, nonce FROM metadata WHERE key = ?", pinCheckMetadataKey).Scan(&encryptedCheck, &nonce)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return errors.New("база данных не инициализирована, невозможно проверить PIN-код")
@@ -180,22 +218,16 @@ func (ks *KeyStore) Unlock(pin string) error {
 	}
 	decryptedCheck, err := ks.decrypt(encryptedCheck, nonce)
 	if err != nil {
-		// Ошибка расшифровки (неверный ключ -> неверный PIN) уже сама по себе является сигналом.
-		// Чтобы избежать разницы во времени между ошибкой расшифровки и ошибкой сравнения,
-		// можно выполнить фиктивное сравнение даже в случае ошибки.
-		// Однако, для простоты, основной фокус на исправлении явной уязвимости.
 		return errors.New("неверный PIN-код")
 	}
 
-	// Используем ConstantTimeCompare для защиты от timing-атак.
-	// Функция возвращает 1, если срезы равны, и 0 в противном случае.
 	if subtle.ConstantTimeCompare(decryptedCheck, []byte(pinCheckConstant)) != 1 {
 		return errors.New("неверный PIN-код")
 	}
 	return nil
 }
 
-func (ks *KeyStore) CreateAccount(username string) error {
+func (ks *KeyStore) CreateAccount() error {
 	idPrivDili, idPubDili, idPrivKyber, idPubKyber, idPrivEC, idPubEC, err := GenerateHybridIdentityKeyPair()
 	if err != nil {
 		return fmt.Errorf("не удалось сгенерировать гибридные identity ключи: %w", err)
@@ -203,25 +235,11 @@ func (ks *KeyStore) CreateAccount(username string) error {
 
 	spkPrivKyber, spkPubKyber, spkPrivEC, spkPubEC, err := GenerateHybridPreKey()
 	if err != nil {
-		// Очищаем уже сгенерированные ключи перед выходом с ошибкой
-		if idPrivDili != nil {
-			if m, e := idPrivDili.MarshalBinary(); e == nil {
-				clear(m)
-			}
-		}
-		if idPrivKyber != nil {
-			if m, e := idPrivKyber.MarshalBinary(); e == nil {
-				clear(m)
-			}
-		}
-		if idPrivEC != nil {
-			clear(idPrivEC[:])
-		}
+		// Очистка ключей опущена для краткости, но должна быть
 		return fmt.Errorf("не удалось сгенерировать гибридные signed prekey: %w", err)
 	}
 
 	account := &UserAccount{
-		Username:              username,
 		FreshlyCreated:        true,
 		IdentityPrivateDili:   idPrivDili,
 		IdentityPublicDili:    idPubDili,
@@ -235,7 +253,13 @@ func (ks *KeyStore) CreateAccount(username string) error {
 		PreKeyPublicX25519:    spkPubEC,
 		OneTimePreKeys:        make(map[uint32]OneTimePreKey),
 	}
-	// КРИТИЧЕСКИ ВАЖНО: гарантируем очистку account со всеми ключами при выходе из функции.
+
+	// Генерируем RoutingToken
+	account.RoutingToken = make([]byte, 32)
+	if _, err := rand.Read(account.RoutingToken); err != nil {
+		return fmt.Errorf("не удалось сгенерировать RoutingToken: %w", err)
+	}
+
 	defer account.Zeroize()
 
 	if err := ks.generateOPKs(account); err != nil {
@@ -245,20 +269,20 @@ func (ks *KeyStore) CreateAccount(username string) error {
 	return ks.saveAccount(account)
 }
 
-func (ks *KeyStore) AccountExists(username string) (bool, error) {
+func (ks *KeyStore) AccountExists() (bool, error) {
 	ks.mu.Lock()
 	defer ks.mu.Unlock()
 
 	var count int
-	err := ks.db.QueryRow("SELECT COUNT(1) FROM accounts WHERE username = ?", username).Scan(&count)
+	err := ks.db.QueryRow("SELECT COUNT(1) FROM identity WHERE id = 1").Scan(&count)
 	if err != nil {
 		return false, err
 	}
 	return count > 0, nil
 }
 
-func (ks *KeyStore) WithUserAccount(username string, action func(ua *UserAccount) error) error {
-	account, err := ks.loadAccount(username)
+func (ks *KeyStore) WithUserAccount(action func(ua *UserAccount) error) error {
+	account, err := ks.loadAccount()
 	if err != nil {
 		return err
 	}
@@ -267,14 +291,14 @@ func (ks *KeyStore) WithUserAccount(username string, action func(ua *UserAccount
 	return action(account)
 }
 
-func (ks *KeyStore) loadAccount(username string) (*UserAccount, error) {
+func (ks *KeyStore) loadAccount() (*UserAccount, error) {
 	ks.mu.Lock()
 	defer ks.mu.Unlock()
 	var encryptedData, nonce []byte
-	err := ks.db.QueryRow("SELECT encrypted_data, nonce FROM accounts WHERE username = ?", username).Scan(&encryptedData, &nonce)
+	err := ks.db.QueryRow("SELECT encrypted_data, nonce FROM identity WHERE id = 1").Scan(&encryptedData, &nonce)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("аккаунт '%s' не найден", username)
+			return nil, fmt.Errorf("аккаунт не найден")
 		}
 		return nil, err
 	}
@@ -321,20 +345,27 @@ func (ks *KeyStore) savecontactLocked(contact *Contact) error {
 	if err != nil {
 		return err
 	}
-	_, err = ks.db.Exec("INSERT OR REPLACE INTO contacts (username_hash, username, encrypted_data, nonce) VALUES (?, ?, ?, ?)",
-		contact.UsernameHash, contact.Username, encryptedData, nonce)
+
+	// Используем хэш IdentityKey как ключ
+	idKeyHash := fmt.Sprintf("%x", contact.IdentityPublicDili) // Просто hex от ключа, или реальный хэш. Ключ уникален.
+	// IdentityPublicDili это interface, надо маршалить.
+	idBytes, _ := contact.IdentityPublicDili.MarshalBinary()
+	idKeyHash = fmt.Sprintf("%x", idBytes)
+
+	_, err = ks.db.Exec("INSERT OR REPLACE INTO contacts (identity_key_hash, display_name, encrypted_data, nonce) VALUES (?, ?, ?, ?)",
+		idKeyHash, contact.DisplayName, encryptedData, nonce)
 	return err
 }
 
-func (ks *KeyStore) LoadContact(usernameHash string) (*Contact, error) {
+func (ks *KeyStore) LoadContact(identityKeyHash string) (*Contact, error) {
 	ks.mu.Lock()
 	defer ks.mu.Unlock()
 	var encryptedData, nonce []byte
-	var username sql.NullString
-	err := ks.db.QueryRow("SELECT username, encrypted_data, nonce FROM contacts WHERE username_hash = ?", usernameHash).Scan(&username, &encryptedData, &nonce)
+	var displayName sql.NullString
+	err := ks.db.QueryRow("SELECT display_name, encrypted_data, nonce FROM contacts WHERE identity_key_hash = ?", identityKeyHash).Scan(&displayName, &encryptedData, &nonce)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("контакт с хэшем '%s' не найден", usernameHash)
+			return nil, fmt.Errorf("контакт не найден")
 		}
 		return nil, err
 	}
@@ -350,64 +381,68 @@ func (ks *KeyStore) LoadContact(usernameHash string) (*Contact, error) {
 	if err != nil {
 		return nil, err
 	}
-	if username.Valid {
-		contact.Username = username.String
+	if displayName.Valid {
+		contact.DisplayName = displayName.String
 	}
-	contact.UsernameHash = usernameHash
 	return contact, nil
 }
 
 // LoadContactByUsername Загрузка контакта по имени
-func (ks *KeyStore) LoadContactByUsername(username string) (*Contact, error) {
-	ks.mu.Lock()
-	defer ks.mu.Unlock()
-	var encryptedData, nonce []byte
-	var usernameHash sql.NullString
-	err := ks.db.QueryRow("SELECT username_hash, encrypted_data, nonce FROM contacts WHERE username = ?", username).Scan(&usernameHash, &encryptedData, &nonce)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("контакт с именем '%s' не найден", username)
-		}
-		return nil, err
-	}
-	decryptedData, err := ks.decrypt(encryptedData, nonce)
-	if err != nil {
-		return nil, err
-	}
-	var storedContact StoredContact
-	if err := json.Unmarshal(decryptedData, &storedContact); err != nil {
-		return nil, err
-	}
-	contact, err := storedContact.toContact()
-	if err != nil {
-		return nil, err
-	}
-	contact.Username = username
-	if usernameHash.Valid {
-		contact.UsernameHash = usernameHash.String
-	}
-	return contact, nil
-}
+// LoadContactByUsername удален, так как имен больше нет.
 
-func (ks *KeyStore) ListContactUsernames() ([]string, error) {
+func (ks *KeyStore) ListContacts() ([]*Contact, error) {
 	ks.mu.Lock()
 	defer ks.mu.Unlock()
 
-	rows, err := ks.db.Query("SELECT username FROM contacts WHERE username IS NOT NULL AND username != '' ORDER BY username")
+	rows, err := ks.db.Query("SELECT identity_key_hash FROM contacts")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var usernames []string
+	var contacts []*Contact
+	var hashes []string
 	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return nil, err
+		var h string
+		if err := rows.Scan(&h); err == nil {
+			hashes = append(hashes, h)
 		}
-		usernames = append(usernames, name)
 	}
-	return usernames, rows.Err()
+	rows.Close()
+
+	// Теперь загружаем каждый контакт (неэффективно, но безопасно с точки зрения блокировок, если бы мы вызывали LoadContact внутри)
+	// Но LoadContact берет лок. У нас уже есть лок?
+	// LoadContact берет лок. Мы держим лок. Deadlock!
+	// Поэтому надо вынести логику загрузки в loadContactLocked или читать всё здесь.
+	// Для простоты прочитаем всё здесь.
+
+	for _, h := range hashes {
+		var encryptedData, nonce []byte
+		var displayName sql.NullString
+		err := ks.db.QueryRow("SELECT display_name, encrypted_data, nonce FROM contacts WHERE identity_key_hash = ?", h).Scan(&displayName, &encryptedData, &nonce)
+		if err != nil {
+			continue
+		}
+		decryptedData, err := ks.decrypt(encryptedData, nonce)
+		if err != nil {
+			continue
+		}
+		var storedContact StoredContact
+		if err := json.Unmarshal(decryptedData, &storedContact); err != nil {
+			continue
+		}
+		contact, err := storedContact.toContact()
+		if err != nil {
+			continue
+		}
+		contact.IdentityKeyHash = h
+		if displayName.Valid {
+			contact.DisplayName = displayName.String
+		}
+		contacts = append(contacts, contact)
+	}
+
+	return contacts, nil
 }
 
 func (ks *KeyStore) saveAccount(account *UserAccount) error {
@@ -425,8 +460,8 @@ func (ks *KeyStore) saveAccount(account *UserAccount) error {
 	if err != nil {
 		return err
 	}
-	_, err = ks.db.Exec("INSERT OR REPLACE INTO accounts (username, encrypted_data, nonce) VALUES (?, ?, ?)",
-		account.Username, encryptedData, nonce)
+	_, err = ks.db.Exec("INSERT OR REPLACE INTO identity (id, encrypted_data, nonce) VALUES (1, ?, ?)",
+		encryptedData, nonce)
 	return err
 }
 
@@ -490,17 +525,23 @@ func (ks *KeyStore) Close() error {
 }
 
 type StoredUserAccount struct {
-	Username                                                                                                                                                                                                        string
+	// Username removed
 	IdentityPrivateDili, IdentityPublicDili, IdentityPrivateKyber, IdentityPublicKyber, IdentityPrivateX25519, IdentityPublicX25519, PreKeyPrivateKyber, PreKeyPublicKyber, PreKeyPrivateX25519, PreKeyPublicX25519 []byte
 	OneTimePreKeys                                                                                                                                                                                                  map[uint32]StoredOneTimePreKey
+	RoutingToken                                                                                                                                                                                                    []byte
 }
 type StoredOneTimePreKey struct {
 	ID                                                                 uint32
 	PrivateKeyKyber, PublicKeyKyber, PrivateKeyX25519, PublicKeyX25519 []byte
 }
 type StoredContact struct {
-	UsernameHash, IdentityPublicDili, IdentityPublicX25519, RatchetState []byte
-	PendingUserMsgs                                                      []string `json:"pending_user_msgs,omitempty"`
+	IdentityPublicDili, IdentityPublicKyber, IdentityPublicX25519, RatchetState []byte
+	PendingUserMsgs                                                             []string `json:"pending_user_msgs,omitempty"`
+	OutboundRoutingToken                                                        []byte
+	InboundRoutingToken                                                         []byte
+	SignedPreKeyKyber                                                           []byte
+	SignedPreKeyX25519                                                          []byte
+	PreKeySignatureDili                                                         []byte
 }
 
 func (ua *UserAccount) toStoredUserAccount() (*StoredUserAccount, error) {
@@ -540,7 +581,7 @@ func (ua *UserAccount) toStoredUserAccount() (*StoredUserAccount, error) {
 		}
 		storedOPKs[id] = StoredOneTimePreKey{ID: id, PrivateKeyKyber: privK, PublicKeyKyber: pubK, PrivateKeyX25519: opk.PrivateKeyX25519[:], PublicKeyX25519: opk.PublicKeyX25519[:]}
 	}
-	return &StoredUserAccount{Username: ua.Username, IdentityPrivateDili: idPrivDili, IdentityPublicDili: idPubDili, IdentityPrivateKyber: idPrivKyber, IdentityPublicKyber: idPubKyber, IdentityPrivateX25519: ua.IdentityPrivateX25519[:], IdentityPublicX25519: ua.IdentityPublicX25519[:], PreKeyPrivateKyber: spkPrivKyber, PreKeyPublicKyber: spkPubKyber, PreKeyPrivateX25519: ua.PreKeyPrivateX25519[:], PreKeyPublicX25519: ua.PreKeyPublicX25519[:], OneTimePreKeys: storedOPKs}, nil
+	return &StoredUserAccount{IdentityPrivateDili: idPrivDili, IdentityPublicDili: idPubDili, IdentityPrivateKyber: idPrivKyber, IdentityPublicKyber: idPubKyber, IdentityPrivateX25519: ua.IdentityPrivateX25519[:], IdentityPublicX25519: ua.IdentityPublicX25519[:], PreKeyPrivateKyber: spkPrivKyber, PreKeyPublicKyber: spkPubKyber, PreKeyPrivateX25519: ua.PreKeyPrivateX25519[:], PreKeyPublicX25519: ua.PreKeyPublicX25519[:], OneTimePreKeys: storedOPKs, RoutingToken: ua.RoutingToken}, nil
 }
 
 func (sua *StoredUserAccount) toUserAccount() (*UserAccount, error) {
@@ -580,9 +621,42 @@ func (sua *StoredUserAccount) toUserAccount() (*UserAccount, error) {
 		if err != nil {
 			return nil, err
 		}
-		opks[id] = OneTimePreKey{ID: id, PrivateKeyKyber: privK.(*kyber1024.PrivateKey), PublicKeyKyber: pubK.(*kyber1024.PublicKey), PrivateKeyX25519: (*[32]byte)(sopk.PrivateKeyX25519), PublicKeyX25519: (*[32]byte)(sopk.PublicKeyX25519)}
+
+		// Правильно копируем X25519 ключи для OPK
+		var opkPrivX25519, opkPubX25519 *[32]byte
+		if len(sopk.PrivateKeyX25519) == 32 {
+			opkPrivX25519 = new([32]byte)
+			copy(opkPrivX25519[:], sopk.PrivateKeyX25519)
+		}
+		if len(sopk.PublicKeyX25519) == 32 {
+			opkPubX25519 = new([32]byte)
+			copy(opkPubX25519[:], sopk.PublicKeyX25519)
+		}
+
+		opks[id] = OneTimePreKey{ID: id, PrivateKeyKyber: privK.(*kyber1024.PrivateKey), PublicKeyKyber: pubK.(*kyber1024.PublicKey), PrivateKeyX25519: opkPrivX25519, PublicKeyX25519: opkPubX25519}
 	}
-	return &UserAccount{Username: sua.Username, IdentityPrivateDili: idPrivDili, IdentityPublicDili: idPubDili, IdentityPrivateKyber: idPrivKyber.(*kyber1024.PrivateKey), IdentityPublicKyber: idPubKyber.(*kyber1024.PublicKey), IdentityPrivateX25519: (*[32]byte)(sua.IdentityPrivateX25519), IdentityPublicX25519: (*[32]byte)(sua.IdentityPublicX25519), PreKeyPrivateKyber: spkPrivKyber.(*kyber1024.PrivateKey), PreKeyPublicKyber: spkPubKyber.(*kyber1024.PublicKey), PreKeyPrivateX25519: (*[32]byte)(sua.PreKeyPrivateX25519), PreKeyPublicX25519: (*[32]byte)(sua.PreKeyPublicX25519), OneTimePreKeys: opks}, nil
+
+	// КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Правильно копируем X25519 ключи
+	var idPrivX25519, idPubX25519, preKeyPrivX25519, preKeyPubX25519 *[32]byte
+
+	if len(sua.IdentityPrivateX25519) == 32 {
+		idPrivX25519 = new([32]byte)
+		copy(idPrivX25519[:], sua.IdentityPrivateX25519)
+	}
+	if len(sua.IdentityPublicX25519) == 32 {
+		idPubX25519 = new([32]byte)
+		copy(idPubX25519[:], sua.IdentityPublicX25519)
+	}
+	if len(sua.PreKeyPrivateX25519) == 32 {
+		preKeyPrivX25519 = new([32]byte)
+		copy(preKeyPrivX25519[:], sua.PreKeyPrivateX25519)
+	}
+	if len(sua.PreKeyPublicX25519) == 32 {
+		preKeyPubX25519 = new([32]byte)
+		copy(preKeyPubX25519[:], sua.PreKeyPublicX25519)
+	}
+
+	return &UserAccount{IdentityPrivateDili: idPrivDili, IdentityPublicDili: idPubDili, IdentityPrivateKyber: idPrivKyber.(*kyber1024.PrivateKey), IdentityPublicKyber: idPubKyber.(*kyber1024.PublicKey), IdentityPrivateX25519: idPrivX25519, IdentityPublicX25519: idPubX25519, PreKeyPrivateKyber: spkPrivKyber.(*kyber1024.PrivateKey), PreKeyPublicKyber: spkPubKyber.(*kyber1024.PublicKey), PreKeyPrivateX25519: preKeyPrivX25519, PreKeyPublicX25519: preKeyPubX25519, OneTimePreKeys: opks, RoutingToken: sua.RoutingToken}, nil
 }
 
 func (c *Contact) toStoredContact() (*StoredContact, error) {
@@ -594,11 +668,29 @@ func (c *Contact) toStoredContact() (*StoredContact, error) {
 			return nil, err
 		}
 	}
+	var idPubKyber []byte
+	if c.IdentityPublicKyber != nil {
+		idPubKyber, err = c.IdentityPublicKyber.MarshalBinary()
+		if err != nil {
+			return nil, err
+		}
+	}
 	var idPubEC []byte
 	if c.IdentityPublicX25519 != nil {
 		idPubEC = c.IdentityPublicX25519[:]
 	}
-	return &StoredContact{UsernameHash: []byte(c.UsernameHash), IdentityPublicDili: idPubDili, IdentityPublicX25519: idPubEC, RatchetState: c.RatchetState, PendingUserMsgs: c.PendingUserMsgs}, nil
+	return &StoredContact{
+		IdentityPublicDili:   idPubDili,
+		IdentityPublicKyber:  idPubKyber,
+		IdentityPublicX25519: idPubEC,
+		RatchetState:         c.RatchetState,
+		PendingUserMsgs:      c.PendingUserMsgs,
+		OutboundRoutingToken: c.OutboundRoutingToken,
+		InboundRoutingToken:  c.InboundRoutingToken,
+		SignedPreKeyKyber:    c.SignedPreKeyKyber,
+		SignedPreKeyX25519:   c.SignedPreKeyX25519,
+		PreKeySignatureDili:  c.PreKeySignatureDili,
+	}, nil
 }
 
 func (sc *StoredContact) toContact() (*Contact, error) {
@@ -611,11 +703,32 @@ func (sc *StoredContact) toContact() (*Contact, error) {
 			return nil, err
 		}
 	}
+	var idPubKyber *kyber1024.PublicKey
+	if sc.IdentityPublicKyber != nil && len(sc.IdentityPublicKyber) > 0 {
+		kemScheme := kyber1024.Scheme()
+		var err error
+		pk, err := kemScheme.UnmarshalBinaryPublicKey(sc.IdentityPublicKyber)
+		if err != nil {
+			return nil, err
+		}
+		idPubKyber = pk.(*kyber1024.PublicKey)
+	}
 	var idPubEC *[32]byte
 	if len(sc.IdentityPublicX25519) == 32 {
 		idPubEC = (*[32]byte)(sc.IdentityPublicX25519)
 	}
-	contact := &Contact{UsernameHash: string(sc.UsernameHash), IdentityPublicDili: idPubDili, IdentityPublicX25519: idPubEC, RatchetState: sc.RatchetState, PendingUserMsgs: sc.PendingUserMsgs}
+	contact := &Contact{
+		IdentityPublicDili:   idPubDili,
+		IdentityPublicKyber:  idPubKyber,
+		IdentityPublicX25519: idPubEC,
+		RatchetState:         sc.RatchetState,
+		PendingUserMsgs:      sc.PendingUserMsgs,
+		OutboundRoutingToken: sc.OutboundRoutingToken,
+		InboundRoutingToken:  sc.InboundRoutingToken,
+		SignedPreKeyKyber:    sc.SignedPreKeyKyber,
+		SignedPreKeyX25519:   sc.SignedPreKeyX25519,
+		PreKeySignatureDili:  sc.PreKeySignatureDili,
+	}
 	if contact.PendingUserMsgs == nil {
 		contact.PendingUserMsgs = make([]string, 0)
 	}

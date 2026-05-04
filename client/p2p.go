@@ -51,32 +51,32 @@ const (
 
 // P2PTransport управляет P2P соединениями через libp2p
 type P2PTransport struct {
-	host           host.Host
-	dht            *dht.IpfsDHT
-	ctx            context.Context
-	cancel         context.CancelFunc
-	handler        CoreEventHandler
-	myUsernameHash string
-	peers          map[string]*P2PeerInfo
-	peersMu        sync.RWMutex
-	messageHandler P2PMessageHandler
-	discovery      *mdnsDiscovery
-	isRunning      bool
-	mu             sync.RWMutex
-	core           interface {
+	host              host.Host
+	dht               *dht.IpfsDHT
+	ctx               context.Context
+	cancel            context.CancelFunc
+	handler           CoreEventHandler
+	myIdentityKeyHash string
+	peers             map[string]*P2PeerInfo
+	peersMu           sync.RWMutex
+	messageHandler    P2PMessageHandler
+	discovery         *mdnsDiscovery
+	isRunning         bool
+	mu                sync.RWMutex
+	core              interface {
 		getP2PHashesForAnnouncement() []string
 	}
 }
 
 // P2PeerInfo содержит информацию о P2P пире
 type P2PeerInfo struct {
-	PeerID       peer.ID
-	UsernameHash string
-	LastSeen     time.Time
-	IsLocal      bool
-	Addresses    []multiaddr.Multiaddr
-	Stream       network.Stream
-	StreamMu     sync.Mutex
+	PeerID          peer.ID
+	IdentityKeyHash string
+	LastSeen        time.Time
+	IsLocal         bool
+	Addresses       []multiaddr.Multiaddr
+	Stream          network.Stream
+	StreamMu        sync.Mutex
 }
 
 // P2PMessageHandler интерфейс для обработки P2P сообщений
@@ -97,7 +97,7 @@ func NewP2PTransport(handler CoreEventHandler) (*P2PTransport, error) {
 }
 
 // Start запускает P2P транспорт
-func (t *P2PTransport) Start(usernameHash string) error {
+func (t *P2PTransport) Start(identityKeyHash string) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -105,7 +105,7 @@ func (t *P2PTransport) Start(usernameHash string) error {
 		return fmt.Errorf("P2P транспорт уже запущен")
 	}
 
-	t.myUsernameHash = usernameHash
+	t.myIdentityKeyHash = identityKeyHash
 	t.handler.OnLog(LogLevelInfo, "🌐 Запуск P2P транспорта...")
 
 	priv, _, err := crypto.GenerateEd25519Key(rand.Reader)
@@ -349,7 +349,8 @@ func (t *P2PTransport) handleStream(stream network.Stream) {
 		return
 	}
 
-	t.updatePeerInfo(packet.SourceClientIdHash, stream.Conn().RemotePeer(), stream.Conn().RemoteMultiaddr())
+	senderHash := fmt.Sprintf("%x", packet.SenderIdentityKey)
+	t.updatePeerInfo(senderHash, stream.Conn().RemotePeer(), stream.Conn().RemoteMultiaddr())
 
 	if t.messageHandler != nil {
 		if err := t.messageHandler.HandleP2PMessage(&packet); err != nil {
@@ -368,7 +369,7 @@ func (t *P2PTransport) sendToPeer(peerInfo *P2PeerInfo, packet *pb.Packet) error
 		defer cancel()
 		stream, err := t.host.NewStream(ctx, peerInfo.PeerID, protocol.ID(ProtocolID))
 		if err != nil {
-			t.removePeer(peerInfo.UsernameHash)
+			t.removePeer(peerInfo.IdentityKeyHash)
 			return fmt.Errorf("не удалось создать поток к пиру: %w", err)
 		}
 		peerInfo.Stream = stream
@@ -386,7 +387,7 @@ func (t *P2PTransport) sendToPeer(peerInfo *P2PeerInfo, packet *pb.Packet) error
 			return err
 		}
 		peerInfo.Stream = nil
-		t.removePeer(peerInfo.UsernameHash)
+		t.removePeer(peerInfo.IdentityKeyHash)
 		return fmt.Errorf("не удалось отправить длину сообщения: %w", err)
 	}
 
@@ -396,11 +397,11 @@ func (t *P2PTransport) sendToPeer(peerInfo *P2PeerInfo, packet *pb.Packet) error
 			return err
 		}
 		peerInfo.Stream = nil
-		t.removePeer(peerInfo.UsernameHash)
+		t.removePeer(peerInfo.IdentityKeyHash)
 		return fmt.Errorf("не удалось отправить тело сообщения: %w", err)
 	}
 
-	t.handler.OnLog(LogLevelInfo, fmt.Sprintf("✉️ P2P сообщение (%d байт) отправлено пиру %s", length, truncateHash(peerInfo.UsernameHash)))
+	t.handler.OnLog(LogLevelInfo, fmt.Sprintf("✉️ P2P сообщение (%d байт) отправлено пиру %s", length, truncateHash(peerInfo.IdentityKeyHash)))
 	return nil
 }
 
@@ -434,15 +435,15 @@ func createDiscoveryCID(hash string) (cid.Cid, error) {
 
 // announceSelf анонсирует все известные контакты
 func (t *P2PTransport) announceSelf() {
-	if t.dht == nil || t.myUsernameHash == "" || t.dht.RoutingTable().Size() == 0 {
+	if t.dht == nil || t.myIdentityKeyHash == "" || t.dht.RoutingTable().Size() == 0 {
 		return
 	}
 
 	var allHashes []string
 	if t.core != nil {
 		allHashes = t.core.getP2PHashesForAnnouncement()
-	} else if t.myUsernameHash != "" {
-		allHashes = []string{t.myUsernameHash}
+	} else if t.myIdentityKeyHash != "" {
+		allHashes = []string{t.myIdentityKeyHash}
 	}
 
 	if len(allHashes) == 0 {
@@ -512,7 +513,7 @@ func (t *P2PTransport) findPeerInDHT(usernameHash string) error {
 }
 
 // updatePeerInfo обновляет информацию о пире
-func (t *P2PTransport) updatePeerInfo(usernameHash string, peerID peer.ID, addrs ...multiaddr.Multiaddr) {
+func (t *P2PTransport) updatePeerInfo(identityKeyHash string, peerID peer.ID, addrs ...multiaddr.Multiaddr) {
 	t.peersMu.Lock()
 	defer t.peersMu.Unlock()
 
@@ -526,7 +527,7 @@ func (t *P2PTransport) updatePeerInfo(usernameHash string, peerID peer.ID, addrs
 		}
 	}
 
-	if info, exists := t.peers[usernameHash]; exists {
+	if info, exists := t.peers[identityKeyHash]; exists {
 		info.LastSeen = time.Now()
 		info.PeerID = peerID
 		for _, addr := range addrs {
@@ -538,33 +539,33 @@ func (t *P2PTransport) updatePeerInfo(usernameHash string, peerID peer.ID, addrs
 			info.IsLocal = true
 		}
 	} else {
-		t.peers[usernameHash] = &P2PeerInfo{
-			PeerID:       peerID,
-			UsernameHash: usernameHash,
-			LastSeen:     time.Now(),
-			IsLocal:      isLocal,
-			Addresses:    addrs,
+		t.peers[identityKeyHash] = &P2PeerInfo{
+			PeerID:          peerID,
+			IdentityKeyHash: identityKeyHash,
+			LastSeen:        time.Now(),
+			IsLocal:         isLocal,
+			Addresses:       addrs,
 		}
 		location := "глобальной"
 		if isLocal {
 			location = "локальной"
 		}
-		t.handler.OnLog(LogLevelInfo, fmt.Sprintf("🔗 Новый P2P пир %s обнаружен в %s сети", truncateHash(usernameHash), location))
+		t.handler.OnLog(LogLevelInfo, fmt.Sprintf("🔗 Новый P2P пир %s обнаружен в %s сети", truncateHash(identityKeyHash), location))
 	}
 }
 
 // getPeer возвращает информацию о пире
-func (t *P2PTransport) getPeer(usernameHash string) *P2PeerInfo {
+func (t *P2PTransport) getPeer(identityKeyHash string) *P2PeerInfo {
 	t.peersMu.RLock()
 	defer t.peersMu.RUnlock()
-	return t.peers[usernameHash]
+	return t.peers[identityKeyHash]
 }
 
 // removePeer удаляет пира из списка
-func (t *P2PTransport) removePeer(usernameHash string) {
+func (t *P2PTransport) removePeer(identityKeyHash string) {
 	t.peersMu.Lock()
 	defer t.peersMu.Unlock()
-	delete(t.peers, usernameHash)
+	delete(t.peers, identityKeyHash)
 }
 
 // cleanupPeers удаляет устаревших пиров

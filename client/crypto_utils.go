@@ -142,16 +142,19 @@ type storedDoubleRatchet struct {
 }
 
 func (dr *DoubleRatchet) MarshalJSON() ([]byte, error) {
-	if dr.KyberS == nil || dr.KyberR == nil || dr.ECS == nil || dr.ECSPub == nil || dr.ECR == nil {
-		return nil, errors.New("невозможно сериализовать рэтчет с nil ключами")
+	if dr.KyberS == nil || dr.ECS == nil || dr.ECSPub == nil || dr.ECR == nil {
+		return nil, errors.New("невозможно сериализовать рэтчет с nil ключами (кроме KyberR)")
 	}
 	kyberSBytes, err := dr.KyberS.MarshalBinary()
 	if err != nil {
 		return nil, err
 	}
-	kyberRBytes, err := dr.KyberR.MarshalBinary()
-	if err != nil {
-		return nil, err
+	var kyberRBytes []byte
+	if dr.KyberR != nil {
+		kyberRBytes, err = dr.KyberR.MarshalBinary()
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Перед сохранением очищаем кэш nonce от слишком старых записей,
@@ -193,11 +196,15 @@ func (dr *DoubleRatchet) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	dr.KyberS = privKey.(*kyber1024.PrivateKey)
-	pubKey, err := kemScheme.UnmarshalBinaryPublicKey(stored.KyberR)
-	if err != nil {
-		return err
+	if len(stored.KyberR) > 0 {
+		pubKey, err := kemScheme.UnmarshalBinaryPublicKey(stored.KyberR)
+		if err != nil {
+			return err
+		}
+		dr.KyberR = pubKey.(*kyber1024.PublicKey)
+	} else {
+		dr.KyberR = nil
 	}
-	dr.KyberR = pubKey.(*kyber1024.PublicKey)
 	if len(stored.ECS) != 32 || len(stored.ECSPub) != 32 || len(stored.ECR) != 32 {
 		return errors.New("неверная длина ключей X25519")
 	}
@@ -270,6 +277,10 @@ func RatchetInitAlice(
 	}
 	ssSpk := append(ssSpkEcdh, ssSpkKem...)
 
+	// DEBUG: Логируем intermediate shared secrets
+	fmt.Printf("[RatchetInitAlice DEBUG] ssIk (first 16 bytes): %x\n", ssIk[:16])
+	fmt.Printf("[RatchetInitAlice DEBUG] ssSpk (first 16 bytes): %x\n", ssSpk[:16])
+
 	var ssOpk []byte
 	var ctOpk []byte
 	if theirOneTimePreKeyKyber != nil && theirOneTimePreKeyX25519 != nil {
@@ -283,9 +294,14 @@ func RatchetInitAlice(
 			return nil, nil, err
 		}
 		ssOpk = append(ssOpkEcdh, ssOpkKem...)
+		fmt.Printf("[RatchetInitAlice DEBUG] ssOpk (first 16 bytes): %x\n", ssOpk[:16]) // DEBUG
 	}
 
 	sk := kdfInitial(ssIk, ssSpk, ssOpk)
+
+	// DEBUG: Логируем derived key
+	fmt.Printf("[RatchetInitAlice DEBUG] sk (first 16 bytes): %x\n", sk[:16])
+
 	ctRatchet, ssRatchetKem, err := kemScheme.Encapsulate(theirSignedPreKeyKyber)
 	if err != nil {
 		return nil, nil, err
@@ -295,11 +311,21 @@ func RatchetInitAlice(
 		return nil, nil, err
 	}
 	ssRatchet := append(ssRatchetEcdh, ssRatchetKem...)
+
 	initialCts := &InitialCiphertexts{
 		IKCiphertext: ctIk, SPKCiphertext: ctSpk, OPKCiphertext: ctOpk,
-		OPKID: theirOneTimePreKeyID, RatchetCiphertext: ctRatchet, EphemeralECPublicKey: aliceEphemeralPubEC[:],
+		OPKID: theirOneTimePreKeyID, RatchetCiphertext: ctRatchet,
+		EphemeralECPublicKey: aliceEphemeralPubEC[:],
 	}
+
+	// DEBUG: Логируем shared secret для ratchet
+	fmt.Printf("[RatchetInitAlice DEBUG] ssRatchet (first 16 bytes): %x\n", ssRatchet[:16])
+
 	rk, cks := kdfRK(sk, ssRatchet)
+
+	// DEBUG: Логируем итоговые ключи
+	fmt.Printf("[RatchetInitAlice DEBUG] RK (first 16 bytes): %x\n", rk[:16])
+	fmt.Printf("[RatchetInitAlice DEBUG] CKs (first 16 bytes): %x\n", cks[:16])
 	ratchet := &DoubleRatchet{
 		KyberS:         aliceEphemeralPrivKyber.(*kyber1024.PrivateKey),
 		KyberR:         theirSignedPreKeyKyber,
@@ -361,6 +387,7 @@ func RatchetInitBob(
 		ssOpk = append(ssOpkEcdh, ssOpkKem...)
 	}
 	sk := kdfInitial(ssIk, ssSpk, ssOpk)
+
 	ssRatchetKem, err := kemScheme.Decapsulate(ourPreKeyPrivKyber, initialCts.RatchetCiphertext)
 	if err != nil {
 		return nil, err
@@ -370,7 +397,9 @@ func RatchetInitBob(
 		return nil, err
 	}
 	ssRatchet := append(ssRatchetEcdh, ssRatchetKem...)
+
 	rk, ckr := kdfRK(sk, ssRatchet)
+
 	_, bobEphemeralPrivKyber, err := kemScheme.GenerateKeyPair()
 	if err != nil {
 		return nil, err
@@ -379,6 +408,7 @@ func RatchetInitBob(
 	if err != nil {
 		return nil, err
 	}
+
 	return &DoubleRatchet{
 		KyberS:         bobEphemeralPrivKyber.(*kyber1024.PrivateKey),
 		KyberR:         theirEphemeralKyberPub,
@@ -392,8 +422,9 @@ func RatchetInitBob(
 		Nr:             0,
 		PN:             0,
 		MKSKIPPED:      make(map[string][]byte),
-		ReceivedNonces: make(map[string]time.Time), // Инициализация кэша
+		ReceivedNonces: make(map[string]time.Time),
 	}, nil
+	// Инициализация кэша
 }
 
 func (dr *DoubleRatchet) RatchetEncrypt(plaintext []byte, firstMessageCts *InitialCiphertexts) (serializedHeader []byte, ciphertext []byte, err error) {
@@ -512,12 +543,16 @@ func (dr *DoubleRatchet) RatchetDecrypt(headerData []byte, ciphertext []byte) ([
 		return nil, err // Произошла реальная ошибка, а не просто ключ не найден
 	}
 
-	currentPubKeyKyberBytes, err := dr.KyberR.MarshalBinary()
-	if err != nil {
-		return nil, err
+	var currentPubKeyKyberBytes []byte
+	if dr.KyberR != nil {
+		currentPubKeyKyberBytes, err = dr.KyberR.MarshalBinary()
+		if err != nil {
+			return nil, err
+		}
 	}
+
 	currentPubKeyECBytes := dr.ECR[:]
-	if !bytes.Equal(header.KyberPublicKey, currentPubKeyKyberBytes) || !bytes.Equal(header.ECPublicKey, currentPubKeyECBytes) {
+	if dr.KyberR == nil || !bytes.Equal(header.KyberPublicKey, currentPubKeyKyberBytes) || !bytes.Equal(header.ECPublicKey, currentPubKeyECBytes) {
 		if err := dr.skipMessageKeys(header.PN); err != nil {
 			return nil, err
 		}

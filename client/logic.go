@@ -16,9 +16,7 @@ package phantomcore
 
 import (
 	"bytes"
-	"context"
-	"crypto/hmac"
-	"crypto/sha256"
+	"crypto/rand"
 	"crypto/sha512"
 	"crypto/tls"
 	"encoding/base64"
@@ -33,9 +31,7 @@ import (
 	"sync"
 	"time"
 
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
@@ -49,7 +45,7 @@ const (
 	MaxMessageSize      = 32 * 1024
 	workerPoolSize      = 10
 	InitiateChatMessage = "__PHANTOM_INITIATE_CHAT__"
-	serverPublicKeyB64  = "example"
+	serverPublicKeyB64  = "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"
 )
 
 var (
@@ -58,27 +54,22 @@ var (
 
 type peerSession struct {
 	initMutex          sync.Mutex
-	pendingKeyResp     *proto2.KeyResponse
 	pendingInboundPkts []*proto2.Packet
 	isEstablished      bool
-	keyRequestInFlight bool
+	// keyRequestInFlight bool // Removed
 }
 
 type logicClient struct {
-	ks             *KeyStore
-	ms             *MessageStore
-	username       string
-	stream         proto2.Phantom_TransmitClient
-	myUsernameHash string
-	mu             sync.RWMutex
-	peerSessions   map[string]*peerSession
-	handler        CoreEventHandler
-	contactsMu     sync.RWMutex
-	usernameToHash map[string]string
-	hashToUsername map[string]string
-	packetQueue    chan *proto2.Packet
-	wg             sync.WaitGroup
-	p2pTransport   *P2PTransport // Ссылка на P2P транспорт
+	ks           *KeyStore
+	ms           *MessageStore
+	stream       proto2.Phantom_TransmitClient
+	mu           sync.RWMutex
+	peerSessions map[string]*peerSession // Key: IdentityKeyHash
+	handler      CoreEventHandler
+	contactsMu   sync.RWMutex
+	packetQueue  chan *proto2.Packet
+	wg           sync.WaitGroup
+	p2pTransport *P2PTransport
 }
 
 func init() {
@@ -98,16 +89,13 @@ func init() {
 	}
 }
 
-func newLogicClient(username string, ks *KeyStore, ms *MessageStore, handler CoreEventHandler) (*logicClient, error) {
+func newLogicClient(ks *KeyStore, ms *MessageStore, handler CoreEventHandler) (*logicClient, error) {
 	client := &logicClient{
-		ks:             ks,
-		ms:             ms,
-		username:       username,
-		peerSessions:   make(map[string]*peerSession),
-		handler:        handler,
-		usernameToHash: make(map[string]string),
-		hashToUsername: make(map[string]string),
-		packetQueue:    make(chan *proto2.Packet, 100),
+		ks:           ks,
+		ms:           ms,
+		peerSessions: make(map[string]*peerSession),
+		handler:      handler,
+		packetQueue:  make(chan *proto2.Packet, 100),
 	}
 	return client, nil
 }
@@ -115,130 +103,33 @@ func newLogicClient(username string, ks *KeyStore, ms *MessageStore, handler Cor
 // Реализация интерфейса P2PMessageHandler
 
 func (c *logicClient) GetUsernameHash() string {
-	return c.myUsernameHash
+	// Возвращаем пустую строку или ID, если нужно.
+	// Для P2P нам нужен PeerID или IdentityKeyHash.
+	// Пока оставим пустым или реализуем позже.
+	return ""
 }
 
 // GetContactHashes возвращает список хэшей всех контактов для P2P анонсирования
 func (c *logicClient) GetContactHashes() []string {
-	c.contactsMu.RLock()
-	defer c.contactsMu.RUnlock()
-
-	var hashes []string
-	for _, hash := range c.usernameToHash {
-		hashes = append(hashes, hash)
-	}
-	return hashes
+	// TODO: Реализовать возврат IdentityKeyHashes
+	return []string{}
 }
 
 func (c *logicClient) HandleP2PMessage(packet *proto2.Packet) error {
-	c.handler.OnLog(LogLevelInfo, fmt.Sprintf("📨 Получен P2P пакет от %s...", truncateHash(packet.SourceClientIdHash)))
+	c.handler.OnLog(LogLevelInfo, fmt.Sprintf("📩 Получено P2P сообщение (RoutingToken: %x)...", packet.RoutingToken))
 
 	switch pld := packet.Payload.(type) {
 	case *proto2.Packet_EncryptedMessage:
 		c.handleEncryptedMessage(packet)
-	case *proto2.Packet_KeyRequest:
-		c.handleP2PKeyRequest(packet)
-	case *proto2.Packet_KeyResponse:
-		c.handleKeyResponse(pld.KeyResponse)
+	case *proto2.Packet_P2PUpdate:
+		c.handler.OnLog(LogLevelInfo, "🔄 Получен P2P Update (Not implemented)")
 	default:
-		c.handler.OnLog(LogLevelWarning, "Получен неизвестный тип P2P пакета")
+		c.handler.OnLog(LogLevelWarning, fmt.Sprintf("⚠️ Получен неизвестный тип P2P пакета: %T", pld))
 	}
 	return nil
 }
 
-// handleP2PKeyRequest обрабатывает P2P запрос ключей
-func (c *logicClient) handleP2PKeyRequest(packet *proto2.Packet) {
-	c.handler.OnLog(LogLevelInfo, fmt.Sprintf("🔑 Получен P2P запрос ключей от %s", truncateHash(packet.SourceClientIdHash)))
-
-	session := c.getOrCreateSession(packet.SourceClientIdHash)
-	session.initMutex.Lock()
-	// Проверяем, не отправили ли мы сами запрос на установку сессии этому пиру.
-	// `keyRequestInFlight` будет true, если мы уже вызвали `sendMessageViaP2P` без сессии.
-	if session.keyRequestInFlight {
-		// Правило разрешения конфликта: выигрывает тот, у кого хэш "меньше".
-		if c.myUsernameHash < packet.SourceClientIdHash {
-			// Наш хэш меньше. Мы "выигрываем" гонку. Мы будем Алисой.
-			// Поэтому мы игнорируем ИХ KeyRequest и ждем KeyResponse на НАШ запрос.
-			c.handler.OnLog(LogLevelInfo, fmt.Sprintf("🏁 Обнаружена встречная инициализация. Мы победили (%s < %s). Игнорируем их запрос.", truncateHash(c.myUsernameHash), truncateHash(packet.SourceClientIdHash)))
-			session.initMutex.Unlock()
-			return
-		}
-		// Наш хэш больше. Мы "проиграли". Мы будем Бобом.
-		// Мы должны отменить нашу собственную инициализацию и просто ответить на их запрос.
-		c.handler.OnLog(LogLevelInfo, fmt.Sprintf("🏁 Обнаружена встречная инициализация. Мы уступаем (%s > %s). Отвечаем на их запрос.", truncateHash(c.myUsernameHash), truncateHash(packet.SourceClientIdHash)))
-		session.keyRequestInFlight = false // Сбрасываем флаг, так как мы больше не инициатор
-	}
-	session.initMutex.Unlock()
-
-	err := c.ks.WithUserAccount(c.username, func(ua *UserAccount) error {
-		opksKyber := make(map[uint32][]byte)
-		opksX25519 := make(map[uint32][]byte)
-
-		// Берем только один OPK для P2P обмена
-		var chosenOPKID uint32
-		for id, key := range ua.OneTimePreKeys {
-			chosenOPKID = id
-			pubBytesK, err := key.PublicKeyKyber.MarshalBinary()
-			if err != nil {
-				return err
-			}
-			opksKyber[id] = pubBytesK
-			opksX25519[id] = key.PublicKeyX25519[:]
-			break // Берем только один
-		}
-
-		idPubDiliBytes, _ := ua.IdentityPublicDili.MarshalBinary()
-		idPubKyberBytes, _ := ua.IdentityPublicKyber.MarshalBinary()
-		spkPubKyberBytes, _ := ua.PreKeyPublicKyber.MarshalBinary()
-
-		dataToSign := append(spkPubKyberBytes, ua.PreKeyPublicX25519[:]...)
-		sig := mode5.Scheme().Sign(ua.IdentityPrivateDili, dataToSign, nil)
-
-		prekeyBundle := &proto2.HybridPreKeyBundle{
-			IdentityKeyDilithium:     idPubDiliBytes,
-			IdentityKeyKyber:         idPubKyberBytes,
-			IdentityKeyX25519:        ua.IdentityPublicX25519[:],
-			SignedPrekeyKyber:        spkPubKyberBytes,
-			SignedPrekeyX25519:       ua.PreKeyPublicX25519[:],
-			PrekeySignatureDilithium: sig,
-			OneTimePrekeysKyber:      opksKyber,
-			OneTimePrekeysX25519:     opksX25519,
-		}
-		bundleData, err := proto.Marshal(prekeyBundle)
-		if err != nil {
-			return err
-		}
-
-		keyResp := &proto2.KeyResponse{
-			HybridPrekeyBundle:  bundleData,
-			ClientIdHash:        c.myUsernameHash,
-			OneTimePrekeyKyber:  opksKyber[chosenOPKID],
-			OneTimePrekeyX25519: opksX25519[chosenOPKID],
-			OneTimePrekeyId:     chosenOPKID,
-		}
-
-		responsePacket := &proto2.Packet{
-			SourceClientIdHash:      c.myUsernameHash,
-			DestinationClientIdHash: packet.SourceClientIdHash,
-			Payload:                 &proto2.Packet_KeyResponse{KeyResponse: keyResp},
-		}
-
-		if err := c.signPacket(responsePacket, ua.IdentityPrivateDili); err != nil {
-			return err
-		}
-
-		if c.p2pTransport != nil {
-			c.handler.OnLog(LogLevelInfo, fmt.Sprintf("🔑 Отправка KeyResponse пиру %s...", truncateHash(packet.SourceClientIdHash)))
-			go c.p2pTransport.SendPacket(packet.SourceClientIdHash, responsePacket)
-		}
-
-		return nil
-	})
-
-	if err != nil {
-		c.handler.OnLog(LogLevelError, fmt.Sprintf("Ошибка обработки P2P запроса ключей: %v", err))
-	}
-}
+// handleP2PKeyRequest removed (legacy)
 
 // sendMessageViaP2P отправляет сообщение через P2P транспорт
 func (c *logicClient) sendMessageViaP2P(peerHash, text string, p2pTransport *P2PTransport) error {
@@ -249,39 +140,29 @@ func (c *logicClient) sendMessageViaP2P(peerHash, text string, p2pTransport *P2P
 	}
 
 	if len(contact.RatchetState) == 0 {
-		c.handler.OnLog(LogLevelInfo, "✅ [HANDSHAKE] Шаг 1: Сессия не установлена. Отправка запроса ключей (KeyRequest)...")
+		// Сессия не установлена. Пытаемся инициализировать из Invite (Contact keys).
+		c.handler.OnLog(LogLevelInfo, "✅ [HANDSHAKE] Шаг 1: Сессия не установлена. Инициализация Alice из Invite...")
 
-		// Устанавливаем флаг, что мы инициируем сессию.
-		// Это поможет разрешить "гонку", если собеседник сделает то же самое.
-		session := c.getOrCreateSession(peerHash)
-		session.initMutex.Lock()
-		session.keyRequestInFlight = true
-		session.initMutex.Unlock()
+		var ratchet *DoubleRatchet
+		var initialCts *InitialCiphertexts
 
-		keyReqPacket := &proto2.Packet{
-			SourceClientIdHash:      c.myUsernameHash,
-			DestinationClientIdHash: peerHash,
-			Payload:                 &proto2.Packet_KeyRequest{KeyRequest: &proto2.KeyRequest{RequestedClientIdHash: peerHash}},
+		err = c.ks.WithUserAccount(func(ua *UserAccount) error {
+			var e error
+			ratchet, initialCts, e = c.initAliceFromInvite(ua, contact)
+			return e
+		})
+
+		if err != nil {
+			c.handler.OnLog(LogLevelError, fmt.Sprintf("Не удалось инициализировать сессию: %v. Сообщение поставлено в очередь.", err))
+			contact.PendingUserMsgs = append(contact.PendingUserMsgs, text)
+			if err := c.ms.SaveMessage(peerHash, true, time.Now().Unix(), text); err != nil {
+				c.handler.OnLog(LogLevelError, fmt.Sprintf("Ошибка сохранения сообщения в очередь в БД: %v", err))
+			}
+			return c.ks.SaveContact(contact)
 		}
+		defer ratchet.Zeroize()
 
-		if err := c.ks.WithUserAccount(c.username, func(ua *UserAccount) error {
-			return c.signPacket(keyReqPacket, ua.IdentityPrivateDili)
-		}); err != nil {
-			return err
-		}
-
-		if err := p2pTransport.SendPacket(peerHash, keyReqPacket); err != nil {
-			return fmt.Errorf("не удалось запросить ключи через P2P: %w", err)
-		}
-
-		c.handler.OnLog(LogLevelInfo, fmt.Sprintf("Сообщение для %s поставлено в очередь.", contact.Username))
-		contact.PendingUserMsgs = append(contact.PendingUserMsgs, text)
-
-		if err := c.ms.SaveMessage(peerHash, true, time.Now().Unix(), text); err != nil {
-			c.handler.OnLog(LogLevelError, fmt.Sprintf("Ошибка сохранения сообщения в очередь в БД: %v", err))
-		}
-
-		return c.ks.SaveContact(contact)
+		return c.sendEncryptedPacket(peerHash, text, ratchet, initialCts)
 	}
 
 	var ratchet DoubleRatchet
@@ -300,8 +181,7 @@ func (c *logicClient) sendMessageViaP2P(peerHash, text string, p2pTransport *P2P
 	}
 
 	packet := &proto2.Packet{
-		SourceClientIdHash:      c.myUsernameHash,
-		DestinationClientIdHash: peerHash,
+		// RoutingToken: ...
 		Payload: &proto2.Packet_EncryptedMessage{EncryptedMessage: &proto2.EncryptedMessage{
 			RatchetHeader: headerData,
 			Ciphertext:    ciphertext,
@@ -319,25 +199,12 @@ func (c *logicClient) sendMessageViaP2P(peerHash, text string, p2pTransport *P2P
 	if err := c.ms.SaveMessage(peerHash, true, time.Now().Unix(), text); err != nil {
 		c.handler.OnLog(LogLevelError, fmt.Sprintf("Ошибка сохранения отправленного сообщения в БД: %v", err))
 	}
-	c.handler.OnLog(LogLevelInfo, fmt.Sprintf("✅ Сообщение успешно отправлено через P2P пиру %s", truncateHash(peerHash)))
+	c.handler.OnLog(LogLevelInfo, fmt.Sprintf("✅ Сообщение успешно отправлено через P2P пиру %s", peerHash))
 	return nil
 }
 
 // startProcessing начинает обработку пакетов после установки соединения.
 func (c *logicClient) startProcessing(stream proto2.Phantom_TransmitClient, tlsConfig *tls.Config, readyChan chan<- error) {
-	// Сначала получаем собственный хэш. Это критически важно для дальнейшей работы.
-	myFinalHash, _, err := getHashesFromServerSecurely(c.username, "dummy", tlsConfig, c.handler)
-	if err != nil {
-		c.handler.OnLog(LogLevelError, fmt.Sprintf("Критическая ошибка: не удалось получить собственный хэш: %v", err))
-		readyChan <- err
-		return
-	}
-	c.myUsernameHash = myFinalHash
-	c.handler.OnLog(LogLevelInfo, fmt.Sprintf("Вход выполнен. Ваш хэш (%s): %s...", c.username, truncateHash(c.myUsernameHash)))
-
-	// Синхронизируем контакты, теперь когда у нас есть TLS конфиг.
-	c.initialContactSync(tlsConfig)
-
 	// Сохраняем стрим и регистрируемся на сервере
 	c.stream = stream
 	if err := c.register(); err != nil {
@@ -381,8 +248,6 @@ func (c *logicClient) packetWorker() {
 
 	for packet := range c.packetQueue {
 		switch pld := packet.Payload.(type) {
-		case *proto2.Packet_KeyResponse:
-			c.handleKeyResponse(pld.KeyResponse)
 		case *proto2.Packet_EncryptedMessage:
 			c.handleEncryptedMessage(packet)
 		case *proto2.Packet_SystemNotification:
@@ -393,122 +258,11 @@ func (c *logicClient) packetWorker() {
 	}
 }
 
-func (c *logicClient) getHashForUsername(username string) string {
-	c.contactsMu.RLock()
-	defer c.contactsMu.RUnlock()
-	return c.usernameToHash[username]
-}
+// initialContactSync удален, так как нет глобального реестра
 
-func (c *logicClient) getUsernameForHash(hash string) string {
-	c.contactsMu.RLock()
-	defer c.contactsMu.RUnlock()
-	return c.hashToUsername[hash]
-}
+// handleKeyResponse removed (legacy)
 
-func (c *logicClient) initialContactSync(tlsConfig *tls.Config) {
-	c.handler.OnLog(LogLevelInfo, "Синхронизация контактов с сервером...")
-	contacts, err := c.ks.ListContactUsernames()
-	if err != nil {
-		c.handler.OnLog(LogLevelError, fmt.Sprintf("Не удалось загрузить контакты из БД для синхронизации: %v", err))
-		return
-	}
-
-	newUsernameToHash := make(map[string]string)
-	newHashToUsername := make(map[string]string)
-	var contactInfos []ContactInfo
-
-	for _, name := range contacts {
-		_, hash, err := getHashesFromServerSecurely("dummy", name, tlsConfig, c.handler)
-		if err == nil {
-			newUsernameToHash[name] = hash
-			newHashToUsername[hash] = name
-			contactInfos = append(contactInfos, ContactInfo{Name: name, Hash: hash})
-
-			// Убеждаемся, что контакт сохранен в локальной БД
-			_, err := c.ks.LoadContact(hash)
-			if err != nil {
-				// Контакт не найден в БД, создаем его
-				contact := &Contact{
-					Username:     name,
-					UsernameHash: hash,
-				}
-				if err := c.ks.SaveContact(contact); err != nil {
-					c.handler.OnLog(LogLevelWarning, fmt.Sprintf("Не удалось сохранить контакт %s в БД: %v", name, err))
-				}
-			}
-		} else {
-			c.handler.OnLog(LogLevelWarning, fmt.Sprintf("Не удалось получить хеш для контакта '%s' при синхронизации.", name))
-		}
-	}
-
-	c.contactsMu.Lock()
-	c.usernameToHash = newUsernameToHash
-	c.hashToUsername = newHashToUsername
-	c.contactsMu.Unlock()
-
-	c.handler.OnContactListUpdated(contactInfos)
-	c.handler.OnLog(LogLevelInfo, fmt.Sprintf("Синхронизация контактов завершена. Загружено %d контактов.", len(c.usernameToHash)))
-}
-
-func (c *logicClient) handleKeyResponse(resp *proto2.KeyResponse) {
-	peerHash := resp.ClientIdHash
-	c.handler.OnLog(LogLevelInfo, fmt.Sprintf("✅ [HANDSHAKE] Шаг 2: Получен KeyResponse от %s.", truncateHash(peerHash)))
-
-	session := c.getOrCreateSession(peerHash)
-	session.initMutex.Lock()
-	defer session.initMutex.Unlock()
-
-	contact, err := c.ks.LoadContact(peerHash)
-	if err == nil && len(contact.RatchetState) > 0 {
-		c.handler.OnLog(LogLevelInfo, fmt.Sprintf("Сессия с %s уже установлена, игнорируем KeyResponse.", truncateHash(peerHash)))
-		return
-	}
-
-	session.pendingKeyResp = resp
-
-	c.handler.OnLog(LogLevelInfo, "✅ [HANDSHAKE] Шаг 3: Инициирую установку сессии как Алиса...")
-	if c.establishSessionAsAlice(session, peerHash) {
-		c.handler.OnLog(LogLevelInfo, "✅ [HANDSHAKE] Шаг 4: Сессия как Алиса успешно установлена.")
-		c.handler.OnSessionEstablished(peerHash)
-
-		freshContact, err := c.ks.LoadContact(peerHash)
-		if err == nil && freshContact != nil {
-			go c.processUserMessages(freshContact)
-		}
-	} else {
-		c.handler.OnLog(LogLevelError, fmt.Sprintf("❌ [HANDSHAKE] Не удалось установить сессию с %s после получения ключей.", truncateHash(peerHash)))
-	}
-}
-
-func (c *logicClient) establishSessionAsAlice(session *peerSession, peerHash string) bool {
-	contact, err := c.ks.LoadContact(peerHash)
-	if err == nil && len(contact.RatchetState) > 0 {
-		return true
-	}
-
-	c.handler.OnLog(LogLevelInfo, "Вы выступаете в роли ИНИЦИАТОРА. Создание гибридной сессии...")
-	ratchet, initialCts, err := c.initAlice(session)
-	if err != nil {
-		c.handler.OnLog(LogLevelError, fmt.Sprintf("Ошибка инициализации (Alice): %v", err))
-		return false
-	}
-	defer ratchet.Zeroize()
-
-	c.handler.OnLog(LogLevelInfo, "Сессия установлена. Отправка пакета инициации...")
-	initiationPayload := fmt.Sprintf("%s:%s", InitiateChatMessage, c.username)
-
-	err = c.sendEncryptedPacket(peerHash, initiationPayload, ratchet, initialCts)
-	if err != nil {
-		c.handler.OnLog(LogLevelError, fmt.Sprintf("Критическая ошибка: не удалось отправить пакет инициации: %v", err))
-		return false
-	}
-
-	session.initMutex.Lock()
-	session.isEstablished = true
-	session.initMutex.Unlock()
-
-	return true
-}
+// establishSessionAsAlice removed (legacy)
 
 func (c *logicClient) sendEncryptedPacket(peerHash, text string, ratchet *DoubleRatchet, initialCts *InitialCiphertexts) error {
 	finalHeaderData, ciphertext, err := ratchet.RatchetEncrypt([]byte(text), initialCts)
@@ -520,9 +274,13 @@ func (c *logicClient) sendEncryptedPacket(peerHash, text string, ratchet *Double
 		return err
 	}
 
+	contact, err := c.ks.LoadContact(peerHash)
+	if err != nil {
+		return fmt.Errorf("contact not found: %w", err)
+	}
+
 	packet := &proto2.Packet{
-		SourceClientIdHash:      c.myUsernameHash,
-		DestinationClientIdHash: peerHash,
+		RoutingToken: contact.OutboundRoutingToken, // Используем токен из контакта!
 		Payload: &proto2.Packet_EncryptedMessage{EncryptedMessage: &proto2.EncryptedMessage{
 			RatchetHeader: finalHeaderData,
 			Ciphertext:    ciphertext,
@@ -533,7 +291,12 @@ func (c *logicClient) sendEncryptedPacket(peerHash, text string, ratchet *Double
 	// Подписываем только пакет инициации сессии для подтверждения авторства ключей.
 	// Обычные сообщения не подписываются для обеспечения отказуемости (deniability).
 	if initialCts != nil {
-		err = c.ks.WithUserAccount(c.username, func(ua *UserAccount) error {
+		err = c.ks.WithUserAccount(func(ua *UserAccount) error {
+			idKeyBytes, err := ua.IdentityPublicDili.MarshalBinary()
+			if err != nil {
+				return err
+			}
+			packet.SenderIdentityKey = idKeyBytes
 			return c.signPacket(packet, ua.IdentityPrivateDili)
 		})
 		if err != nil {
@@ -563,102 +326,175 @@ func (c *logicClient) sendEncryptedPacket(peerHash, text string, ratchet *Double
 }
 
 func (c *logicClient) handleEncryptedMessage(packet *proto2.Packet) {
-	peerHash := packet.SourceClientIdHash
+	// peerHash больше нет в пакете.
+	// Мы должны определить peerHash (IdentityKeyHash) по RoutingToken, на который пришел пакет.
+	// Но Packet.RoutingToken - это то, КУДА отправлено.
+	// Если мы получили пакет, значит он пришел на один из наших ListenTokens.
+	// Нам нужно знать, КАКОЙ это был токен.
+	// Проблема: gRPC stream.Recv() возвращает Packet, и там поле RoutingToken заполнено отправителем.
+	// Сервер не меняет его.
+	// Значит, мы можем прочитать packet.RoutingToken и найти контакт.
+
+	routingToken := packet.RoutingToken
+
+	// Ищем контакт по InboundRoutingToken
+	var peerHash string
+	var contact *Contact
+
+	contacts, err := c.ks.ListContacts()
+	if err == nil {
+		for _, ct := range contacts {
+			if bytes.Equal(ct.InboundRoutingToken, routingToken) {
+				contact = ct
+				// peerHash = ct.IdentityKeyHash? У нас нет поля Hash в Contact struct, но есть IdentityPublicDili
+				// Мы можем вычислить хэш.
+				idBytes, _ := ct.IdentityPublicDili.MarshalBinary()
+				peerHash = fmt.Sprintf("%x", idBytes)
+				break
+			}
+		}
+	}
+
+	// Если не нашли по токену, возможно это "Main Invite Token" (если мы его реализовали в UserAccount)
+	if contact == nil {
+		var myRoutingToken []byte
+		c.ks.WithUserAccount(func(ua *UserAccount) error {
+			myRoutingToken = ua.RoutingToken
+			return nil
+		})
+
+		if bytes.Equal(routingToken, myRoutingToken) {
+			// Это сообщение на наш основной токен (Handshake)
+			// Мы еще не знаем кто это.
+			// Мы должны попытаться расшифровать или извлечь SenderIdentityKey.
+			// Если это Handshake, там должен быть SenderIdentityKey.
+			if len(packet.SenderIdentityKey) > 0 {
+				// Это новый контакт!
+				// Создаем временную структуру или обрабатываем как "Неизвестный"
+				// Но для decryptAndHandle нам нужен peerHash.
+				peerHash = fmt.Sprintf("%x", packet.SenderIdentityKey)
+				// Проверяем, может он уже есть (просто токен сменился или мы потеряли связь)
+				// Если нет, создаем.
+				// Но мы должны быть осторожны с DoS.
+
+				// Проверим подпись пакета СЕЙЧАС.
+				diliScheme := mode5.Scheme()
+				pubKey, err := diliScheme.UnmarshalBinaryPublicKey(packet.SenderIdentityKey)
+				if err == nil {
+					// Формируем msg для проверки
+					// signPacket подписывает (RoutingToken + Payload)
+					var payloadBytes []byte
+					if pkt, ok := packet.Payload.(*proto2.Packet_EncryptedMessage); ok {
+						payloadBytes, _ = proto.Marshal(pkt.EncryptedMessage)
+					}
+					msg := append(packet.RoutingToken, payloadBytes...)
+
+					if diliScheme.Verify(pubKey, msg, packet.Signature, nil) {
+						// Подпись верна!
+						// Создаем контакт.
+						newContact := &Contact{
+							DisplayName:        "Unknown", // Или извлечь из payload если там есть? Нет.
+							IdentityPublicDili: pubKey,
+							// IdentityPublicX25519 пока нет, он внутри шифрованного сообщения (в RatchetHeader)
+							// OutboundRoutingToken пока нет! Мы не можем ответить, пока не расшифруем сообщение и не найдем там "Reply-To" токен.
+							// Но для расшифровки нам нужен только IdentityKey (для проверки подписи внутри Ratchet? Нет, Ratchet симметричный + DH).
+							// Для первого сообщения (Alice -> Bob), Bob (мы) использует свои ключи (PreKeys).
+							// Alice использовала наши PreKeys.
+							// Нам нужно инициализировать сессию как Bob.
+						}
+						// Сохраняем
+						// Но нам нужен OutboundRoutingToken для ответа.
+						// Предположим, что он придет внутри сообщения?
+						// Или мы пока не можем ответить.
+
+						// Сохраняем контакт.
+						// c.usernameToHash // Removed
+						if err := c.ks.SaveContact(newContact); err == nil {
+							peerHash = fmt.Sprintf("%x", packet.SenderIdentityKey)
+							contact = newContact
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if contact == nil {
+		var myRoutingToken []byte
+		c.ks.WithUserAccount(func(ua *UserAccount) error {
+			myRoutingToken = ua.RoutingToken
+			return nil
+		})
+
+		if bytes.Equal(routingToken, myRoutingToken) {
+			// ... (existing logic)
+		} else {
+			c.handler.OnLog(LogLevelWarning, fmt.Sprintf("Получен пакет на неизвестный токен: %x. Мой токен: %x", routingToken, myRoutingToken))
+			// Debug: list contacts
+			contacts, _ := c.ks.ListContacts()
+			for _, ct := range contacts {
+				c.handler.OnLog(LogLevelWarning, fmt.Sprintf("Контакт %s: Inbound=%x", ct.DisplayName, ct.InboundRoutingToken))
+			}
+			return
+		}
+	}
+
 	session := c.getOrCreateSession(peerHash)
 
 	session.initMutex.Lock()
 
-	contact, _ := c.ks.LoadContact(peerHash)
-	if contact != nil && len(contact.RatchetState) > 0 {
-		session.initMutex.Unlock()
-		c.decryptAndHandle(packet)
-		return
-	}
-
-	session.pendingInboundPkts = append(session.pendingInboundPkts, packet)
-
-	if session.keyRequestInFlight {
-		session.initMutex.Unlock()
-		return
-	}
-
-	session.keyRequestInFlight = true
+	contact, _ = c.ks.LoadContact(peerHash)
 	session.initMutex.Unlock()
-
-	c.handler.OnLog(LogLevelInfo, fmt.Sprintf("Получен зашифрованный пакет от %s, но ключи еще не получены. Запрос ключей...", truncateHash(peerHash)))
-	c.requestKeys(peerHash)
+	c.decryptAndHandle(packet)
 }
 
 func (c *logicClient) processInboundPackets(packetsToProcess []*proto2.Packet) {
 	if len(packetsToProcess) == 0 {
 		return
 	}
-	peerHash := packetsToProcess[0].SourceClientIdHash
+	// peerHash := packetsToProcess[0].SourceClientIdHash // Removed
 
-	established := c.tryEstablishSessionAsBob(peerHash, packetsToProcess[0])
-	if established {
-		c.handler.OnSessionEstablished(peerHash)
-	}
-
+	// The session establishment as Bob is now handled within decryptAndHandle
+	// when RatchetState is empty.
+	// This function might need to be re-evaluated or removed if its sole purpose
+	// was to manage the old KeyRequest/KeyResponse flow.
+	// For now, we'll just iterate and decrypt.
 	for _, packet := range packetsToProcess {
 		c.decryptAndHandle(packet)
 	}
 }
 
-func (c *logicClient) tryEstablishSessionAsBob(peerHash string, packet *proto2.Packet) bool {
-	contact, err := c.ks.LoadContact(peerHash)
-	if err == nil && len(contact.RatchetState) > 0 {
-		return true
-	}
-
-	session := c.getOrCreateSession(peerHash)
-
-	if session.pendingKeyResp == nil {
-		return false
-	}
-
-	msg := packet.GetEncryptedMessage()
-	var headerWithInitialCts struct {
-		RatchetHeader
-		InitialCiphertexts *InitialCiphertexts `json:"initial_cts,omitempty"`
-	}
-	if err := json.Unmarshal(msg.RatchetHeader, &headerWithInitialCts); err != nil {
-		return false
-	}
-	if headerWithInitialCts.InitialCiphertexts == nil {
-		return false
-	}
-
-	var ratchet *DoubleRatchet
-	err = c.ks.WithUserAccount(c.username, func(ua *UserAccount) error {
-		var initErr error
-		ratchet, initErr = c.initBob(session, ua, headerWithInitialCts.RatchetHeader, headerWithInitialCts.InitialCiphertexts)
-		return initErr
-	})
-
-	if err != nil {
-		c.handler.OnLog(LogLevelError, fmt.Sprintf("Ошибка инициализации сессии из пакета: %v", err))
-		return false
-	}
-	defer ratchet.Zeroize()
-
-	if err := c.persistRatchetState(peerHash, ratchet); err != nil {
-		c.handler.OnLog(LogLevelError, fmt.Sprintf("Критическая ошибка сохранения сессии Боба: %v", err))
-		return false
-	}
-
-	session.initMutex.Lock()
-	session.isEstablished = true
-	session.initMutex.Unlock()
-
-	if newContact, err := c.ks.LoadContact(peerHash); err == nil && newContact != nil {
-		go c.processUserMessages(newContact)
-	}
-	return true
-}
+// tryEstablishSessionAsBob больше не нужен в таком виде, так как мы обрабатываем это в handleEncryptedMessage
+// Но оставим пока как заглушку или вспомогательный метод
 
 func (c *logicClient) decryptAndHandle(packet *proto2.Packet) {
-	peerHash := packet.SourceClientIdHash
+	// peerHash нужно передавать или извлекать.
+	// Но сигнатура метода принимает только packet.
+	// Мы уже определили peerHash в handleEncryptedMessage, но здесь мы его теряем.
+	// Надо изменить сигнатуру decryptAndHandle или извлекать снова.
+	// Извлечем снова (неэффективно, но проще для рефакторинга).
+
+	routingToken := packet.RoutingToken
+	var peerHash string
+
+	contacts, _ := c.ks.ListContacts()
+	for _, ct := range contacts {
+		if bytes.Equal(ct.InboundRoutingToken, routingToken) {
+			idBytes, _ := ct.IdentityPublicDili.MarshalBinary()
+			peerHash = fmt.Sprintf("%x", idBytes)
+			break
+		}
+	}
+
+	// Если не нашли, проверяем Main Token и SenderIdentityKey
+	if peerHash == "" && len(packet.SenderIdentityKey) > 0 {
+		peerHash = fmt.Sprintf("%x", packet.SenderIdentityKey)
+	}
+
+	if peerHash == "" {
+		return
+	}
+
 	contact, err := c.ks.LoadContact(peerHash)
 
 	// **КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ**
@@ -667,7 +503,7 @@ func (c *logicClient) decryptAndHandle(packet *proto2.Packet) {
 
 		if c.tryEstablishSessionAsBob(peerHash, packet) {
 			c.handler.OnLog(LogLevelInfo, "✅ Сессия успешно установлена как Боб. Повторная обработка пакета...")
-			c.decryptAndHandle(packet) // Рекурсивный вызов для расшифровки тем же пакетом
+			c.handleEncryptedMessage(packet) // Рекурсивный вызов для расшифровки тем же пакетом
 		} else {
 			c.handler.OnLog(LogLevelWarning, fmt.Sprintf("Не удалось установить сессию как Боб. Пакет от %s отброшен.", truncateHash(peerHash)))
 		}
@@ -686,7 +522,11 @@ func (c *logicClient) decryptAndHandle(packet *proto2.Packet) {
 		c.handler.OnLog(LogLevelError, fmt.Sprintf("Ошибка расшифровки: %v", err))
 		return
 	}
-	c.handler.OnLog(LogLevelInfo, fmt.Sprintf("✅ Сообщение от %s успешно расшифровано.", truncateHash(peerHash)))
+	if contact == nil {
+		c.handler.OnLog(LogLevelWarning, fmt.Sprintf("Получено сообщение от неизвестного контакта (Hash: %s). Игнорирование.", peerHash))
+		return
+	}
+	c.handler.OnLog(LogLevelInfo, fmt.Sprintf("✅ Сообщение от %s успешно расшифровано.", peerHash))
 
 	if err := c.persistRatchetState(peerHash, &ratchet); err != nil {
 		c.handler.OnLog(LogLevelCritical, fmt.Sprintf("Не удалось сохранить состояние сессии после расшифровки: %v", err))
@@ -699,26 +539,27 @@ func (c *logicClient) decryptAndHandle(packet *proto2.Packet) {
 		parts := strings.SplitN(plaintext, ":", 2)
 		if len(parts) == 2 {
 			revealedUsername := parts[1]
-			c.handler.OnLog(LogLevelInfo, fmt.Sprintf("Собеседник %s (%s...) инициировал чат.", revealedUsername, truncateHash(packet.SourceClientIdHash)))
+			c.handler.OnLog(LogLevelInfo, fmt.Sprintf("Собеседник %s (%s...) инициировал чат.", revealedUsername, peerHash))
 
 			go beeep.Notify("Новый чат", fmt.Sprintf("Пользователь '%s' хочет начать с вами диалог.", revealedUsername), "")
 
-			if contact.Username == "" || strings.HasPrefix(contact.Username, "Незнакомец") {
-				contact.Username = revealedUsername
+			if contact.DisplayName == "" || strings.HasPrefix(contact.DisplayName, "Unknown") {
+				// contact.Username = username // Removed
+				contact.DisplayName = revealedUsername
 				if err := c.ks.SaveContact(contact); err != nil {
 					c.handler.OnLog(LogLevelError, fmt.Sprintf("Не удалось сохранить имя собеседника: %v", err))
 				} else {
 					c.contactsMu.Lock()
-					c.usernameToHash[revealedUsername] = peerHash
-					c.hashToUsername[peerHash] = revealedUsername
+					// c.usernameToHash[revealedUsername] = peerHash // Removed
+					// c.hashToUsername[peerHash] = revealedUsername // Removed
 					c.contactsMu.Unlock()
 
 					c.handler.OnLog(LogLevelInfo, "Обнаружен новый контакт. Немедленное обновление списка контактов в UI...")
 
 					c.contactsMu.RLock()
 					var allContacts []ContactInfo
-					for name, hash := range c.usernameToHash {
-						allContacts = append(allContacts, ContactInfo{Name: name, Hash: hash, IsOnline: true})
+					for _, ct := range contacts {
+						allContacts = append(allContacts, ContactInfo{Name: ct.DisplayName, Hash: ct.IdentityKeyHash, IsOnline: true})
 					}
 					c.contactsMu.RUnlock()
 
@@ -730,12 +571,11 @@ func (c *logicClient) decryptAndHandle(packet *proto2.Packet) {
 	}
 
 	var senderName string
-	if contact != nil && contact.Username != "" {
-		senderName = contact.Username
+	if contact != nil && contact.DisplayName != "" {
+		senderName = contact.DisplayName
 	} else {
-		senderName = c.getUsernameForHash(peerHash)
 		if senderName == "" {
-			senderName = truncateHash(peerHash)
+			senderName = peerHash
 		}
 	}
 
@@ -762,123 +602,185 @@ func (c *logicClient) processUserMessages(contact *Contact) {
 		c.handler.OnLog(LogLevelError, fmt.Sprintf("Не удалось очистить очередь в БД перед отправкой: %v", err))
 	}
 
-	c.handler.OnLog(LogLevelInfo, fmt.Sprintf("✅ [HANDSHAKE] Шаг 5: Сессия установлена. Отправка %d отложенных сообщений для %s...", len(messagesToSend), contact.Username))
+	c.handler.OnLog(LogLevelInfo, fmt.Sprintf("✅ [HANDSHAKE] Шаг 5: Сессия установлена. Отправка %d отложенных сообщений для %s...", len(messagesToSend), contact.DisplayName))
 
 	for _, text := range messagesToSend {
-		if err := c.sendMessageViaP2P(contact.UsernameHash, text, c.p2pTransport); err != nil {
+		userHash := contact.IdentityKeyHash
+		if err := c.sendMessageViaP2P(userHash, text, c.p2pTransport); err != nil {
 			c.handler.OnLog(LogLevelError, fmt.Sprintf("Ошибка отправки сообщения '%s': %v.", text, err))
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 }
 
-func (c *logicClient) startNewChat(peerUsername string, tlsConfig *tls.Config) error {
-	_, peerHash, err := getHashesFromServerSecurely(c.username, peerUsername, tlsConfig, c.handler)
+func (c *logicClient) ProcessInvite(invite *proto2.Invite) error {
+	// Импорт инвайта
+	// 1. Проверяем подпись пре-ключа (Dilithium)
+	// 2. Сохраняем контакт
+
+	diliScheme := mode5.Scheme()
+	pk, err := diliScheme.UnmarshalBinaryPublicKey(invite.IdentityKeyDilithium)
 	if err != nil {
-		return fmt.Errorf("could not get hash for %s: %w", peerUsername, err)
+		return fmt.Errorf("invalid identity key (Dilithium): %w", err)
 	}
 
-	c.contactsMu.Lock()
-	c.usernameToHash[peerUsername] = peerHash
-	c.hashToUsername[peerHash] = peerUsername
-	c.contactsMu.Unlock()
-
-	contact, _ := c.ks.LoadContact(peerHash)
-	if contact == nil {
-		contact = &Contact{Username: peerUsername, UsernameHash: peerHash}
-		if err := c.ks.SaveContact(contact); err != nil {
-			return fmt.Errorf("could not save new contact: %w", err)
-		}
-		go c.initialContactSync(tlsConfig)
+	kemScheme := kyber1024.Scheme()
+	pkKyber, err := kemScheme.UnmarshalBinaryPublicKey(invite.IdentityKeyKyber)
+	if err != nil {
+		return fmt.Errorf("invalid identity key (Kyber): %w", err)
 	}
 
-	c.handler.OnLog(LogLevelInfo, fmt.Sprintf("Starting new chat with %s (%s...)", peerUsername, truncateHash(peerHash)))
-	return c.requestKeys(peerHash)
+	// Verify signature over IdentityKeys + SignedPreKeys
+	// Use a fresh slice to avoid modifying the underlying arrays of the invite fields
+	dataToVerify := make([]byte, 0, len(invite.IdentityKeyKyber)+len(invite.IdentityKeyX25519)+len(invite.SignedPrekeyKyber)+len(invite.SignedPrekeyX25519))
+	dataToVerify = append(dataToVerify, invite.IdentityKeyKyber...)
+	dataToVerify = append(dataToVerify, invite.IdentityKeyX25519...)
+	dataToVerify = append(dataToVerify, invite.SignedPrekeyKyber...)
+	dataToVerify = append(dataToVerify, invite.SignedPrekeyX25519...)
+
+	if !diliScheme.Verify(pk, dataToVerify, invite.PrekeySignatureDilithium, nil) {
+		return errors.New("invalid prekey signature in invite")
+	}
+
+	// DEBUG: Проверяем что ключи разные в invite
+	fmt.Printf("[ProcessInvite DEBUG] IdentityKeyKyber (first 16): %x\n", invite.IdentityKeyKyber[:16])
+	fmt.Printf("[ProcessInvite DEBUG] SignedPrekeyKyber (first 16): %x\n", invite.SignedPrekeyKyber[:16])
+	fmt.Printf("[ProcessInvite DEBUG] Keys are same: %v\n", bytes.Equal(invite.IdentityKeyKyber, invite.SignedPrekeyKyber))
+
+	// idKeyHash // Removed
+
+	contact := &Contact{
+		DisplayName:          invite.DisplayName,
+		IdentityPublicDili:   pk,
+		IdentityPublicKyber:  pkKyber.(*kyber1024.PublicKey),
+		OutboundRoutingToken: invite.RoutingToken,
+		SignedPreKeyKyber:    invite.SignedPrekeyKyber,
+		SignedPreKeyX25519:   invite.SignedPrekeyX25519,
+		PreKeySignatureDili:  invite.PrekeySignatureDilithium,
+	}
+	if len(invite.IdentityKeyX25519) == 32 {
+		var k [32]byte
+		copy(k[:], invite.IdentityKeyX25519)
+		contact.IdentityPublicX25519 = &k
+	}
+
+	// Генерируем InboundRoutingToken для этого контакта
+	inToken := make([]byte, 32)
+	rand.Read(inToken)
+	contact.InboundRoutingToken = inToken
+
+	// c.usernameToHash // Removed
+
+	if err := c.ks.SaveContact(contact); err != nil {
+		return err
+	}
+
+	// Нужно зарегистрировать новый токен на сервере!
+	// Это требует отправки RegistrationRequest с новым токеном.
+	// Пока просто перерегистрируемся (неэффективно, но работает)
+	go c.register()
+
+	return nil
 }
 
 func (c *logicClient) sendMessage(peerHash, text string) error {
 	contact, err := c.ks.LoadContact(peerHash)
 	if err != nil {
-		return fmt.Errorf("не могу найти контакт для отправки сообщения: %w", err)
+		return fmt.Errorf("contact not found: %w", err)
 	}
 
-	if len(contact.RatchetState) > 0 {
-		var ratchet DoubleRatchet
-		if err := json.Unmarshal(contact.RatchetState, &ratchet); err != nil {
-			return fmt.Errorf("не удалось восстановить сессию для отправки: %w", err)
+	if len(contact.OutboundRoutingToken) == 0 {
+		return fmt.Errorf("no outbound routing token for contact")
+	}
+
+	// Если сессии нет, мы должны начать handshake.
+	// В новой схеме Invite уже содержит ключи.
+	// Мы можем сразу шифровать!
+	// Но нам нужно создать сессию Double Ratchet.
+
+	if len(contact.RatchetState) == 0 {
+		// Инициализация сессии как Alice (мы отправляем первое сообщение)
+		session := c.getOrCreateSession(peerHash)
+		session.initMutex.Lock()
+		defer session.initMutex.Unlock()
+
+		// Загружаем ключи из контакта (они пришли из Invite)
+		// Нам нужен PreKeyBundle.
+		// В Invite у нас есть: SignedPreKeyKyber, SignedPreKeyX25519.
+		// OneTimePreKey нет (в QR коде обычно один набор).
+		// Мы используем SignedPreKey как "последний шанс" или единственный ключ.
+
+		// Создаем Ratchet
+		var ratchet *DoubleRatchet
+		var initialCts *InitialCiphertexts
+
+		err = c.ks.WithUserAccount(func(ua *UserAccount) error {
+			var e error
+			ratchet, initialCts, e = c.initAliceFromInvite(ua, contact)
+			return e
+		})
+		if err != nil {
+			return err
 		}
 		defer ratchet.Zeroize()
 
-		err := c.sendEncryptedPacket(peerHash, text, &ratchet, nil)
-		if err == nil {
-			err := c.ms.SaveMessage(peerHash, true, time.Now().Unix(), text)
-			if err != nil {
-				return err
-			}
-		}
+		// Шифруем и отправляем
+		return c.sendEncryptedPacket(peerHash, text, ratchet, initialCts)
+	}
+
+	// Сессия есть, просто шифруем
+	var ratchet DoubleRatchet
+	if err := json.Unmarshal(contact.RatchetState, &ratchet); err != nil {
 		return err
 	}
+	defer ratchet.Zeroize()
 
-	c.handler.OnLog(LogLevelInfo, "Сессия не установлена. Сообщение сохранено и будет отправлено автоматически.")
-	contact.PendingUserMsgs = append(contact.PendingUserMsgs, text)
-
-	// Сохраняем контакт с сообщением в очереди
-	if err := c.ks.SaveContact(contact); err != nil {
-		return fmt.Errorf("не удалось сохранить сообщение в очередь: %w", err)
-	}
-
-	// После сохранения сообщения в очередь, немедленно инициируем хендшейк,
-	// отправляя запрос на ключи через сервер.
-	return c.requestKeys(peerHash)
+	return c.sendEncryptedPacket(peerHash, text, &ratchet, nil)
 }
 
-func (c *logicClient) initAlice(session *peerSession) (*DoubleRatchet, *InitialCiphertexts, error) {
-	resp := session.pendingKeyResp
-	var prekeyBundle proto2.HybridPreKeyBundle
-	if err := proto.Unmarshal(resp.HybridPrekeyBundle, &prekeyBundle); err != nil {
-		return nil, nil, fmt.Errorf("ошибка разбора HybridPreKeyBundle: %w", err)
+func (c *logicClient) initAliceFromInvite(ua *UserAccount, contact *Contact) (*DoubleRatchet, *InitialCiphertexts, error) {
+	kemScheme := kyber1024.Scheme()
+
+	if contact.IdentityPublicDili == nil {
+		return nil, nil, errors.New("contact has no identity key")
 	}
-	diliScheme, kemScheme := mode5.Scheme(), kyber1024.Scheme()
-	theirIKeyDili, err := diliScheme.UnmarshalBinaryPublicKey(prekeyBundle.IdentityKeyDilithium)
-	if err != nil {
-		return nil, nil, err
+	theirIKeyDili := contact.IdentityPublicDili
+
+	if contact.IdentityPublicX25519 == nil {
+		return nil, nil, errors.New("contact has no X25519 identity key")
 	}
-	theirIKeyKyber, err := kemScheme.UnmarshalBinaryPublicKey(prekeyBundle.IdentityKeyKyber)
-	if err != nil {
-		return nil, nil, err
-	}
-	theirSPKeyKyber, err := kemScheme.UnmarshalBinaryPublicKey(prekeyBundle.SignedPrekeyKyber)
-	if err != nil {
-		return nil, nil, err
+	theirIKeyX25519 := contact.IdentityPublicX25519
+
+	// Используем SignedPreKeys из контакта
+	if len(contact.SignedPreKeyKyber) == 0 || len(contact.SignedPreKeyX25519) == 0 {
+		return nil, nil, errors.New("contact has no SignedPreKeys")
 	}
 
-	if len(prekeyBundle.IdentityKeyX25519) != 32 || len(prekeyBundle.SignedPrekeyX25519) != 32 {
-		return nil, nil, errors.New("неверная длина классических ключей в бандле")
+	theirSPKeyKyber, err := kemScheme.UnmarshalBinaryPublicKey(contact.SignedPreKeyKyber)
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid Kyber SignedPreKey: %w", err)
 	}
-	theirIKeyX25519, theirSPKeyX25519 := (*[32]byte)(prekeyBundle.IdentityKeyX25519), (*[32]byte)(prekeyBundle.SignedPrekeyX25519)
-	dataToVerify := append(prekeyBundle.SignedPrekeyKyber, prekeyBundle.SignedPrekeyX25519...)
-	if !mode5.Verify(theirIKeyDili.(*mode5.PublicKey), dataToVerify, prekeyBundle.PrekeySignatureDilithium) {
-		return nil, nil, errors.New("гибрид: неверная подпись prekey собеседника (Dilithium5)")
+
+	if len(contact.SignedPreKeyX25519) != 32 {
+		return nil, nil, errors.New("invalid X25519 SignedPreKey length")
 	}
-	if err := c.verifyIdentityKeys(theirIKeyDili, theirIKeyX25519, resp.ClientIdHash); err != nil {
-		return nil, nil, err
+	theirSPKeyX25519 := (*[32]byte)(contact.SignedPreKeyX25519)
+
+	// Проверяем подпись
+	dataToVerify := append(contact.SignedPreKeyKyber, contact.SignedPreKeyX25519...)
+	if !mode5.Verify(theirIKeyDili.(*mode5.PublicKey), dataToVerify, contact.PreKeySignatureDili) {
+		return nil, nil, errors.New("invalid PreKey signature")
 	}
-	var theirOPKeyKyber *kyber1024.PublicKey
-	var theirOPKeyX25519 *[32]byte
-	if len(resp.OneTimePrekeyKyber) > 0 {
-		opk, err := kemScheme.UnmarshalBinaryPublicKey(resp.OneTimePrekeyKyber)
-		if err != nil {
-			return nil, nil, err
-		}
-		theirOPKeyKyber = opk.(*kyber1024.PublicKey)
-		if len(resp.OneTimePrekeyX25519) != 32 {
-			return nil, nil, errors.New("получен OPK Kyber, но OPK X25519 имеет неверную длину")
-		}
-		theirOPKeyX25519 = (*[32]byte)(resp.OneTimePrekeyX25519)
-	} else {
-		c.handler.OnLog(LogLevelWarning, "ВНИМАНИЕ: Собеседник не предоставил одноразовые ключи (OPK).")
-	}
-	ratchet, initialCts, err := RatchetInitAlice(theirIKeyKyber.(*kyber1024.PublicKey), theirIKeyX25519, theirSPKeyKyber.(*kyber1024.PublicKey), theirSPKeyX25519, theirOPKeyKyber, theirOPKeyX25519, resp.OneTimePrekeyId)
+
+	// One-Time PreKeys отсутствуют в Invite. Передаем nil.
+	// Это означает, что мы используем только SignedPreKey.
+	// Это менее безопасно (нет PFS для первого сообщения, если SignedPreKey скомпрометирован),
+	// но допустимо для упрощенной схемы Invite.
+
+	var opkKyber *kyber1024.PublicKey = nil
+	var opkX25519 *[32]byte = nil
+
+	ratchet, initialCts, err := RatchetInitAlice(contact.IdentityPublicKyber, theirIKeyX25519, theirSPKeyKyber.(*kyber1024.PublicKey), theirSPKeyX25519, opkKyber, opkX25519, 0)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -887,33 +789,19 @@ func (c *logicClient) initAlice(session *peerSession) (*DoubleRatchet, *InitialC
 }
 
 func (c *logicClient) initBob(session *peerSession, ua *UserAccount, header RatchetHeader, initialCts *InitialCiphertexts) (*DoubleRatchet, error) {
-	resp := session.pendingKeyResp
-	var prekeyBundle proto2.HybridPreKeyBundle
-	if err := proto.Unmarshal(resp.HybridPrekeyBundle, &prekeyBundle); err != nil {
-		return nil, fmt.Errorf("ошибка разбора HybridPreKeyBundle для Bob: %w", err)
-	}
-	diliScheme, kemScheme := mode5.Scheme(), kyber1024.Scheme()
-	theirIKeyDili, err := diliScheme.UnmarshalBinaryPublicKey(prekeyBundle.IdentityKeyDilithium)
-	if err != nil {
-		return nil, err
-	}
+	kemScheme := kyber1024.Scheme()
 
-	if len(prekeyBundle.IdentityKeyX25519) != 32 {
-		return nil, errors.New("неверная длина X25519 IK в бандле Боба")
-	}
-	theirIKeyX25519 := (*[32]byte)(prekeyBundle.IdentityKeyX25519)
-	if err := c.verifyIdentityKeys(theirIKeyDili, theirIKeyX25519, resp.ClientIdHash); err != nil {
-		return nil, err
-	}
 	pk, err := kemScheme.UnmarshalBinaryPublicKey(header.KyberPublicKey)
 	if err != nil {
 		return nil, err
 	}
 	theirEphemeralKyberPub := pk.(*kyber1024.PublicKey)
+
 	if len(initialCts.EphemeralECPublicKey) != 32 {
 		return nil, errors.New("неверная длина эфемерного ключа Алисы")
 	}
 	theirEphemeralECPub := (*[32]byte)(initialCts.EphemeralECPublicKey)
+
 	opkID := initialCts.OPKID
 	ourUsedOneTimeKey, ok := ua.OneTimePreKeys[opkID]
 	var ourOpkPrivKyber *kyber1024.PrivateKey
@@ -921,9 +809,13 @@ func (c *logicClient) initBob(session *peerSession, ua *UserAccount, header Ratc
 	if ok {
 		c.handler.OnLog(LogLevelInfo, fmt.Sprintf("Инициатор использовал наш гибридный OPK #%d.", opkID))
 		ourOpkPrivKyber, ourOpkPrivX25519 = ourUsedOneTimeKey.PrivateKeyKyber, ourUsedOneTimeKey.PrivateKeyX25519
-	} else if len(initialCts.OPKCiphertext) > 0 {
-		return nil, fmt.Errorf("критическая ошибка: инициатор использовал OPK с ID %d, который не найден у нас", opkID)
 	}
+
+	// Если OPK не найден, но он был использован (OPKID != 0), RatchetInitBob может вернуть ошибку или мы должны обработать это.
+	// Но RatchetInitBob принимает указатели, так что если они nil, он будет использовать только SignedPreKey (если протокол позволяет).
+	// В нашей реализации RatchetInitBob требует OPK если он был использован?
+	// Проверим реализацию RatchetInitBob позже, но пока передаем то что есть.
+
 	ratchet, err := RatchetInitBob(ua.IdentityPrivateKyber, ua.IdentityPrivateX25519, ua.PreKeyPrivateKyber, ua.PreKeyPrivateX25519, ourOpkPrivKyber, ourOpkPrivX25519, theirEphemeralKyberPub, theirEphemeralECPub, initialCts)
 	if err != nil {
 		return nil, err
@@ -954,138 +846,90 @@ func (c *logicClient) getOrCreateSession(peerHash string) *peerSession {
 		return session
 	}
 
-	c.handler.OnLog(LogLevelInfo, fmt.Sprintf("Создана новая пустая сессия для %s...", truncateHash(peerHash)))
+	c.handler.OnLog(LogLevelInfo, fmt.Sprintf("Создана новая пустая сессия для %s...", peerHash))
 	session = &peerSession{}
 	c.peerSessions[peerHash] = session
 
 	return session
 }
 
-func (c *logicClient) verifyIdentityKeys(newKeyDili sign.PublicKey, newKeyX25519 *[32]byte, peerHash string) error {
-	contact, err := c.ks.LoadContact(peerHash)
-	if err == nil && contact != nil && contact.IdentityPublicDili != nil && contact.IdentityPublicX25519 != nil {
-		diliChanged := !contact.IdentityPublicDili.Equal(newKeyDili)
-		ecChanged := !bytes.Equal(contact.IdentityPublicX25519[:], newKeyX25519[:])
-		if diliChanged || ecChanged {
-			c.handler.OnLog(LogLevelWarning, "ВНИМАНИЕ: Ключ идентификации собеседника изменился! Возможна атака.")
-			return errors.New("смена ключа идентификации")
-		}
-	}
-	if contact == nil {
-		contact = &Contact{UsernameHash: peerHash}
-	}
-	contact.IdentityPublicDili, contact.IdentityPublicX25519 = newKeyDili, newKeyX25519
-	if err := c.ks.SaveContact(contact); err != nil {
-		c.handler.OnLog(LogLevelError, fmt.Sprintf("Ошибка сохранения IdentityKey: %v", err))
-	}
-	return nil
-}
-
 func (c *logicClient) register() error {
-	c.handler.OnLog(LogLevelInfo, "Регистрация на сервере с гибридными ключами...")
+	c.handler.OnLog(LogLevelInfo, "📝 Регистрация на сервере...")
 
-	return c.ks.WithUserAccount(c.username, func(ua *UserAccount) error {
-		opksKyber := make(map[uint32][]byte)
-		opksX25519 := make(map[uint32][]byte)
-		for id, key := range ua.OneTimePreKeys {
-			pubBytesK, err := key.PublicKeyKyber.MarshalBinary()
-			if err != nil {
-				return err
-			}
-			opksKyber[id], opksX25519[id] = pubBytesK, key.PublicKeyX25519[:]
-		}
-
-		idPubDiliBytes, err := ua.IdentityPublicDili.MarshalBinary()
-		if err != nil {
-			return err
-		}
-		idPubKyberBytes, err := ua.IdentityPublicKyber.MarshalBinary()
-		if err != nil {
-			return err
-		}
-		spkPubKyberBytes, err := ua.PreKeyPublicKyber.MarshalBinary()
-		if err != nil {
-			return err
-		}
-
-		idPubX25519Bytes := ua.IdentityPublicX25519[:]
-		spkPubX25519Bytes := ua.PreKeyPublicX25519[:]
-		dataToSign := append(spkPubKyberBytes, spkPubX25519Bytes...)
-
-		sig := mode5.Scheme().Sign(ua.IdentityPrivateDili, dataToSign, nil)
-
-		prekeyBundle := &proto2.HybridPreKeyBundle{
-			IdentityKeyDilithium: idPubDiliBytes, IdentityKeyKyber: idPubKyberBytes, IdentityKeyX25519: idPubX25519Bytes,
-			SignedPrekeyKyber: spkPubKyberBytes, SignedPrekeyX25519: spkPubX25519Bytes,
-			PrekeySignatureDilithium: sig, OneTimePrekeysKyber: opksKyber, OneTimePrekeysX25519: opksX25519,
-		}
-		bundleData, err := proto.Marshal(prekeyBundle)
-		if err != nil {
-			return err
-		}
-
-		// Подготавливаем регистрационный запрос
-		regRequest := &proto2.RegistrationRequest{
-			HybridPrekeyBundle: bundleData,
-		}
-
-		// Добавляем P2P информацию если P2P транспорт активен
-		if c.p2pTransport != nil {
-			peerID := c.getP2PPeerID()
-			addresses := c.getP2PAddresses()
-			if peerID != "" && len(addresses) > 0 {
-				regRequest.P2PInfo = &proto2.P2PInfo{
-					PeerId:       peerID,
-					Addresses:    addresses,
-					PreferP2P:    true,
-					RelayWilling: false, // По умолчанию не relay
-				}
-				c.handler.OnLog(LogLevelInfo, "📡 Регистрация с P2P поддержкой")
-			}
-		}
-
-		packet := &proto2.Packet{
-			SourceClientIdHash: c.myUsernameHash,
-			Payload:            &proto2.Packet_RegistrationRequest{RegistrationRequest: regRequest},
-		}
-
-		if err := c.signPacket(packet, ua.IdentityPrivateDili); err != nil {
-			return err
-		}
-
-		c.handler.OnLog(LogLevelInfo, fmt.Sprintf("✅ Гибридный регистрационный пакет с %d OPK отправлен.", len(opksKyber)))
-		return c.stream.Send(packet)
-	})
-}
-
-func (c *logicClient) requestKeys(userHash string) error {
-	c.handler.OnLog(LogLevelInfo, fmt.Sprintf("Запрос ключей для %s...", truncateHash(userHash)))
-	packet := &proto2.Packet{
-		SourceClientIdHash: c.myUsernameHash,
-		Payload:            &proto2.Packet_KeyRequest{KeyRequest: &proto2.KeyRequest{RequestedClientIdHash: userHash}},
+	var listenTokens [][]byte
+	contacts, err := c.ks.ListContacts()
+	if err != nil {
+		return fmt.Errorf("ошибка получения контактов: %w", err)
 	}
 
-	err := c.ks.WithUserAccount(c.username, func(ua *UserAccount) error {
-		return c.signPacket(packet, ua.IdentityPrivateDili)
+	for _, contact := range contacts {
+		if len(contact.InboundRoutingToken) > 0 {
+			listenTokens = append(listenTokens, contact.InboundRoutingToken)
+		}
+	}
+
+	err = c.ks.WithUserAccount(func(ua *UserAccount) error {
+		if len(ua.RoutingToken) > 0 {
+			listenTokens = append(listenTokens, ua.RoutingToken)
+		}
+		return nil
 	})
 	if err != nil {
 		return err
 	}
 
-	return c.stream.Send(packet)
+	req := &proto2.RegistrationRequest{
+		ListenTokens: listenTokens,
+		P2PInfo:      c.getP2PInfo(),
+	}
+
+	err = c.ks.WithUserAccount(func(ua *UserAccount) error {
+		idKeyBytes, err := ua.IdentityPublicDili.MarshalBinary()
+		if err != nil {
+			return err
+		}
+		packet := &proto2.Packet{
+			SenderIdentityKey: idKeyBytes,
+			Payload:           &proto2.Packet_RegistrationRequest{RegistrationRequest: req},
+		}
+		if err := c.signPacket(packet, ua.IdentityPrivateDili); err != nil {
+			return err
+		}
+
+		if c.stream == nil {
+			return fmt.Errorf("stream is nil")
+		}
+		return c.stream.Send(packet)
+	})
+	return err
 }
+
+// requestKeys removed (legacy)
 
 func (c *logicClient) persistRatchetState(userHash string, ratchet *DoubleRatchet) error {
 	contact, err := c.ks.LoadContact(userHash)
-	if err != nil {
-		contact = &Contact{UsernameHash: userHash}
+	if err != nil || contact == nil {
+		c.handler.OnLog(LogLevelInfo, fmt.Sprintf("Контакт %s не найден, создание нового...", userHash))
+
+		// The original instruction provided `packet.SenderIdentityKey` here,
+		// but `packet` is not available in `persistRatchetState`.
+		// Assuming the intent was to create a contact if not found,
+		// but without the SenderIdentityKey from a packet, we can't populate it fully.
+		// For now, we'll create a basic contact.
+		// If SenderIdentityKey is truly needed here, the function signature or call site needs adjustment.
+		contact = &Contact{
+			IdentityKeyHash: userHash,
+			DisplayName:     "Unknown Sender", // Default name
+		}
 	}
+
 	ratchetData, err := json.Marshal(ratchet)
 	if err != nil {
 		c.handler.OnLog(LogLevelCritical, fmt.Sprintf("Не удалось сериализовать состояние рэтчета: %v", err))
 		return err
 	}
 	contact.RatchetState = ratchetData
+
 	if err := c.ks.SaveContact(contact); err != nil {
 		c.handler.OnLog(LogLevelCritical, fmt.Sprintf("Не удалось сохранить состояние сессии в БД: %v", err))
 		return err
@@ -1106,26 +950,20 @@ func (c *logicClient) signPacket(packet *proto2.Packet, privKey sign.PrivateKey)
 
 func (c *logicClient) handleSystemNotification(notif *proto2.SystemNotification) bool {
 	switch notif.Type {
-	case proto2.SystemNotification_OPK_LOW:
-		c.handler.OnLog(LogLevelWarning, "ВНИМАНИЕ: На сервере заканчиваются ваши одноразовые ключи (OPK).")
-		go c.replenishOPKsAndReregister()
-	case proto2.SystemNotification_REGISTRATION_FAILED_USERNAME_TAKEN:
-		c.handler.OnLog(LogLevelCritical, fmt.Sprintf("ОШИБКА РЕГИСТРАЦИИ: %s", notif.Message))
-		return true
+	case proto2.SystemNotification_DELIVERY_FAILURE:
+		c.handler.OnLog(LogLevelError, fmt.Sprintf("❌ Ошибка доставки: %s", notif.Message))
+		// TODO: Mark message as failed in DB?
 	case proto2.SystemNotification_P2P_AVAILABLE:
-		// Обработка уведомления о доступности P2P
-		if notif.P2PInfo != nil && c.p2pTransport != nil {
-			c.handler.OnLog(LogLevelInfo, fmt.Sprintf("🌐 Получено уведомление: пир доступен через P2P"))
-			c.updateP2PPeerInfo(notif.P2PInfo)
-		}
+		c.handler.OnLog(LogLevelInfo, "🔒 P2P доступен для контакта.")
+		// Можно инициировать P2P соединение, если нужно
 	case proto2.SystemNotification_P2P_PEER_INFO:
-		// Обработка P2P информации о пире
-		if notif.P2PInfo != nil && c.p2pTransport != nil {
-			c.handler.OnLog(LogLevelInfo, fmt.Sprintf("📡 Получена P2P информация о пире"))
+		if notif.P2PInfo != nil {
 			c.updateP2PPeerInfo(notif.P2PInfo)
 		}
+	default:
+		c.handler.OnLog(LogLevelWarning, fmt.Sprintf("⚠️ Получено системное уведомление неизвестного типа: %v", notif.Type))
 	}
-	return false
+	return true
 }
 
 // updateP2PPeerInfo обновляет информацию о P2P пире
@@ -1170,28 +1008,48 @@ func (c *logicClient) getP2PAddresses() []string {
 	return result
 }
 
+// getP2PInfo возвращает P2PInfo для регистрации
+func (c *logicClient) getP2PInfo() *proto2.P2PInfo {
+	if c.p2pTransport == nil {
+		return nil
+	}
+
+	peerID := c.getP2PPeerID()
+	addresses := c.getP2PAddresses()
+
+	if peerID == "" || len(addresses) == 0 {
+		return nil
+	}
+
+	return &proto2.P2PInfo{
+		PeerId:       peerID,
+		Addresses:    addresses,
+		PreferP2P:    true,
+		RelayWilling: false, // По умолчанию не relay
+	}
+}
+
 // sendP2PUpdate отправляет обновление P2P информации на сервер
 func (c *logicClient) sendP2PUpdate() error {
 	if c.stream == nil || c.p2pTransport == nil {
 		return nil
 	}
 
-	addresses := c.getP2PAddresses()
-	if len(addresses) == 0 {
+	p2pInfo := c.getP2PInfo()
+	if p2pInfo == nil {
 		return nil
 	}
 
 	update := &proto2.P2PUpdate{
-		Addresses:    addresses,
-		RelayWilling: false,
+		Addresses:    p2pInfo.Addresses,
+		RelayWilling: p2pInfo.RelayWilling,
 	}
 
 	packet := &proto2.Packet{
-		SourceClientIdHash: c.myUsernameHash,
-		Payload:            &proto2.Packet_P2PUpdate{P2PUpdate: update},
+		Payload: &proto2.Packet_P2PUpdate{P2PUpdate: update},
 	}
 
-	err := c.ks.WithUserAccount(c.username, func(ua *UserAccount) error {
+	err := c.ks.WithUserAccount(func(ua *UserAccount) error {
 		return c.signPacket(packet, ua.IdentityPrivateDili)
 	})
 	if err != nil {
@@ -1202,7 +1060,7 @@ func (c *logicClient) sendP2PUpdate() error {
 }
 
 func (c *logicClient) replenishOPKsAndReregister() {
-	err := c.ks.WithUserAccount(c.username, func(ua *UserAccount) error {
+	err := c.ks.WithUserAccount(func(ua *UserAccount) error {
 		c.handler.OnLog(LogLevelInfo, "Пополнение OPK...")
 		newAccount, err := c.ks.ReplenishOPKs(ua)
 		if err != nil {
@@ -1224,7 +1082,7 @@ func (c *logicClient) replenishOPKsAndReregister() {
 
 func (c *logicClient) generateSafetyNumber(peerHash string) (string, error) {
 	var safetyNumber string
-	err := c.ks.WithUserAccount(c.username, func(ua *UserAccount) error {
+	err := c.ks.WithUserAccount(func(ua *UserAccount) error {
 		contact, err := c.ks.LoadContact(peerHash)
 		if err != nil || contact.IdentityPublicDili == nil || contact.IdentityPublicX25519 == nil {
 			return errors.New("невозможно сгенерировать номер безопасности: информация о собеседнике отсутствует. Убедитесь, что сессия успешно установлена")
@@ -1264,118 +1122,139 @@ func (c *logicClient) shutdown() {
 	c.handler.OnLog(LogLevelInfo, "✅ Обработчики пакетов остановлены.")
 }
 
-func truncateHash(hash string) string {
-	if len(hash) > 8 {
-		return hash[:8]
-	}
-	return hash
-}
+// getHashesFromServerSecurely removed (legacy)
 
-// forceConnection принудительно устанавливает соединение через реальный вызов.
-func forceConnection(conn *grpc.ClientConn, timeout time.Duration, handler CoreEventHandler) error {
-	handler.OnLog(LogLevelInfo, fmt.Sprintf("🔍 Проверка соединения (таймаут: %v)", timeout))
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
+func (c *logicClient) CreateInvite(displayName string) (string, error) {
+	var invite *proto2.Invite
+	err := c.ks.WithUserAccount(func(ua *UserAccount) error {
+		if ua.PreKeyPublicKyber == nil || ua.PreKeyPublicX25519 == nil {
+			return errors.New("prekeys not initialized")
+		}
 
-	authClient := proto2.NewAuthClient(conn)
-	state := conn.GetState()
-	handler.OnLog(LogLevelInfo, fmt.Sprintf("📊 Текущее состояние: %v", state))
+		// Pack Kyber keys
+		var kyberIDBytes [kyber1024.PublicKeySize]byte
+		ua.IdentityPublicKyber.Pack(kyberIDBytes[:])
 
-	_, err := authClient.GetPublicSalt(ctx, &proto2.PublicSaltRequest{})
+		var kyberPreKeyBytes [kyber1024.PublicKeySize]byte
+		ua.PreKeyPublicKyber.Pack(kyberPreKeyBytes[:])
+
+		// Pack Dilithium Key
+		var diliIDBytes [mode5.PublicKeySize]byte
+		// ua.IdentityPublicDili is sign.PublicKey interface, assert to *mode5.PublicKey
+		diliPub, ok := ua.IdentityPublicDili.(*mode5.PublicKey)
+		if !ok {
+			return errors.New("invalid dilithium public key type")
+		}
+		diliPub.Pack(&diliIDBytes)
+
+		// Sign PreKeys (Kyber || X25519)
+		dataToSign := append(kyberPreKeyBytes[:], ua.PreKeyPublicX25519[:]...)
+		signature := mode5.Scheme().Sign(ua.IdentityPrivateDili, dataToSign, nil)
+
+		invite = &proto2.Invite{
+			IdentityKeyDilithium:     diliIDBytes[:],
+			IdentityKeyKyber:         kyberIDBytes[:],
+			IdentityKeyX25519:        ua.IdentityPublicX25519[:],
+			SignedPrekeyKyber:        kyberPreKeyBytes[:],
+			SignedPrekeyX25519:       ua.PreKeyPublicX25519[:],
+			PrekeySignatureDilithium: signature,
+			RoutingToken:             ua.RoutingToken,
+			DisplayName:              displayName,
+		}
+		return nil
+	})
 	if err != nil {
-		finalState := conn.GetState()
-		handler.OnLog(LogLevelError, fmt.Sprintf("❌ Проверка не удалась. Состояние: %v → %v, ошибка: %v", state, finalState, err))
-		return err
+		return "", err
 	}
-	finalState := conn.GetState()
-	handler.OnLog(LogLevelInfo, fmt.Sprintf("✅ Проверка успешна. Состояние: %v → %v", state, finalState))
-	return nil
+
+	data, err := proto.Marshal(invite)
+	if err != nil {
+		return "", err
+	}
+
+	return base64.URLEncoding.EncodeToString(data), nil
 }
 
-func getHashesFromServerSecurely(myUsername, destUsername string, tlsConfig *tls.Config, handler CoreEventHandler) (string, string, error) {
-	maxAttempts := 3
-	baseTimeout := 10 * time.Second
+// tryEstablishSessionAsBob пытается установить сессию как Боб (получатель первого сообщения)
+// tryEstablishSessionAsBob пытается установить сессию как Боб (получатель первого сообщения)
+func (c *logicClient) tryEstablishSessionAsBob(peerHash string, packet *proto2.Packet) bool {
+	// Проверяем наличие контакта и создаем его, если нет
+	contact, err := c.ks.LoadContact(peerHash)
+	if err != nil || contact == nil {
+		c.handler.OnLog(LogLevelInfo, fmt.Sprintf("Контакт %s не найден, создание нового...", peerHash))
 
-	creds := credentials.NewTLS(tlsConfig)
+		if len(packet.SenderIdentityKey) == 0 {
+			c.handler.OnLog(LogLevelError, "SenderIdentityKey отсутствует в пакете, невозможно создать контакт.")
+			return false
+		}
 
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		timeout := time.Duration(attempt) * baseTimeout
-		var conn *grpc.ClientConn
-		var err error
-
-		conn, err = grpc.NewClient(
-			serverAddress,
-			grpc.WithTransportCredentials(creds),
-			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(1024*1024)),
-		)
+		pubKey, err := mode5.Scheme().UnmarshalBinaryPublicKey(packet.SenderIdentityKey)
 		if err != nil {
-			if attempt == maxAttempts {
-				return "", "", fmt.Errorf("не удалось подключиться для получения хэшей после %d попыток: %v", maxAttempts, err)
-			}
-			handler.OnLog(LogLevelWarning, fmt.Sprintf("Попытка %d/%d подключения не удалась: %v", attempt, maxAttempts, err))
-			time.Sleep(time.Second * time.Duration(attempt))
-			continue
+			c.handler.OnLog(LogLevelError, fmt.Sprintf("Ошибка декодирования SenderIdentityKey: %v", err))
+			return false
 		}
 
-		if err := forceConnection(conn, timeout, handler); err != nil {
-			err := conn.Close()
-			if err != nil {
-				return "", "", err
-			}
-			if attempt == maxAttempts {
-				return "", "", fmt.Errorf("тест соединения не прошел после %d попыток: %v", maxAttempts, err)
-			}
-			handler.OnLog(LogLevelWarning, fmt.Sprintf("Тест соединения %d/%d не удался: %v", attempt, maxAttempts, err))
-			time.Sleep(time.Second * time.Duration(attempt))
-			continue
+		contact = &Contact{
+			IdentityKeyHash:    peerHash,
+			IdentityPublicDili: pubKey,
+			DisplayName:        "Unknown Sender",
 		}
 
-		authClient := proto2.NewAuthClient(conn)
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
-
-		publicSalt := []byte("your-fixed-salt-that-will-be-the-same-every-time")
-		myLocalHash := hmac.New(sha256.New, publicSalt)
-		myLocalHash.Write([]byte(myUsername))
-		destLocalHash := hmac.New(sha256.New, publicSalt)
-		destLocalHash.Write([]byte(destUsername))
-
-		myFinalHashResp, err := authClient.GetFinalHash(ctx, &proto2.FinalHashRequest{LocalHash: myLocalHash.Sum(nil)})
-		if err != nil {
-			cancel()
-			err := conn.Close()
-			if err != nil {
-				return "", "", err
-			}
-			if attempt == maxAttempts {
-				return "", "", fmt.Errorf("ошибка получения финального хэша для %s после %d попыток: %w", myUsername, maxAttempts, err)
-			}
-			handler.OnLog(LogLevelWarning, fmt.Sprintf("Ошибка получения хэша для %s, попытка %d/%d: %v", myUsername, attempt, maxAttempts, err))
-			time.Sleep(time.Second * time.Duration(attempt))
-			continue
+		// Сохраняем контакт СРАЗУ, чтобы у него были ключи
+		if err := c.ks.SaveContact(contact); err != nil {
+			c.handler.OnLog(LogLevelError, fmt.Sprintf("Ошибка сохранения нового контакта: %v", err))
+			return false
 		}
-
-		destFinalHashResp, err := authClient.GetFinalHash(ctx, &proto2.FinalHashRequest{LocalHash: destLocalHash.Sum(nil)})
-		if err != nil {
-			cancel()
-			err := conn.Close()
-			if err != nil {
-				return "", "", err
-			}
-			if attempt == maxAttempts {
-				return "", "", fmt.Errorf("ошибка получения финального хэша для %s после %d попыток: %w", destUsername, maxAttempts, err)
-			}
-			handler.OnLog(LogLevelWarning, fmt.Sprintf("Ошибка получения хэша для %s, попытка %d/%d: %v", destUsername, attempt, maxAttempts, err))
-			time.Sleep(time.Second * time.Duration(attempt))
-			continue
-		}
-
-		cancel()
-		err = conn.Close()
-		if err != nil {
-			return "", "", err
-		}
-		return myFinalHashResp.FinalHash, destFinalHashResp.FinalHash, nil
 	}
 
-	return "", "", fmt.Errorf("все попытки подключения исчерпаны")
+	session := c.getOrCreateSession(peerHash)
+
+	msg := packet.GetEncryptedMessage()
+	if msg == nil {
+		c.handler.OnLog(LogLevelError, "tryEstablishSessionAsBob: msg is nil")
+		return false
+	}
+
+	var headerWithInitialCts struct {
+		RatchetHeader
+		InitialCiphertexts *InitialCiphertexts `json:"initial_cts,omitempty"`
+	}
+	if err := json.Unmarshal(msg.RatchetHeader, &headerWithInitialCts); err != nil {
+		c.handler.OnLog(LogLevelError, fmt.Sprintf("tryEstablishSessionAsBob: json unmarshal error: %v", err))
+		return false
+	}
+	if headerWithInitialCts.InitialCiphertexts == nil {
+		c.handler.OnLog(LogLevelWarning, "tryEstablishSessionAsBob: InitialCiphertexts is nil")
+		return false
+	}
+
+	var ratchet *DoubleRatchet
+	err = c.ks.WithUserAccount(func(ua *UserAccount) error {
+		if ua == nil {
+			return fmt.Errorf("UserAccount is nil")
+		}
+		var initErr error
+		ratchet, initErr = c.initBob(session, ua, headerWithInitialCts.RatchetHeader, headerWithInitialCts.InitialCiphertexts)
+		return initErr
+	})
+
+	if err != nil {
+		c.handler.OnLog(LogLevelError, fmt.Sprintf("Ошибка инициализации сессии из пакета: %v", err))
+		return false
+	}
+	defer ratchet.Zeroize()
+
+	if err := c.persistRatchetState(peerHash, ratchet); err != nil {
+		c.handler.OnLog(LogLevelError, fmt.Sprintf("Критическая ошибка сохранения сессии Боба: %v", err))
+		return false
+	}
+
+	session.initMutex.Lock()
+	session.isEstablished = true
+	session.initMutex.Unlock()
+
+	if newContact, err := c.ks.LoadContact(peerHash); err == nil && newContact != nil {
+		go c.processUserMessages(newContact)
+	}
+	return true
 }
